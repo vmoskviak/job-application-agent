@@ -1,0 +1,141 @@
+@page {
+    size: A4;
+    margin: 2cm 2cm 1.8cm 2.5cm;
+}
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: "Calibri", Arial, Helvetica, sans-serif;
+    font-size: 10.5pt;
+    color: #222222;
+    line-height: 1.3;
+    /* лівий край, не justify: розтягнуті пробіли ламають парсери ATS */
+    text-align: left;
+}
+
+/* ── Header ────────────────────────────────────────────── */
+
+.header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-bottom: 12pt;
+}
+
+.header-left {
+    flex: 1;
+    text-align: left;
+}
+
+h1, h2, .cv-subtitle, .contact-line, .dates, .company, .role, .note, .skill-row {
+    text-align: left;
+}
+
+h1 {
+    font-size: 22pt;
+    font-weight: bold;
+    color: #1a1a2e;
+    line-height: 1.1;
+    margin-bottom: 3pt;
+}
+
+.cv-subtitle {
+    font-size: 12pt;
+    color: #555555;
+    margin-bottom: 6pt;
+}
+
+.contact-line {
+    font-size: 10pt;
+    color: #555555;
+    margin-bottom: 1pt;
+}
+
+.photo {
+    width: 3.5cm;
+    height: 4.5cm;
+    object-fit: cover;
+    flex-shrink: 0;
+    margin-left: 1cm;
+}
+
+/* ── Section headers ────────────────────────────────────── */
+
+h2 {
+    font-size: 9.5pt;
+    font-weight: bold;
+    color: #1a1a2e;
+    text-transform: uppercase;
+    letter-spacing: 0.5pt;
+    border-bottom: 0.8pt solid #1a1a2e;
+    padding-bottom: 2pt;
+    margin-top: 18pt;
+    margin-bottom: 4pt;
+    break-after: avoid;
+    page-break-after: avoid;
+}
+
+/* ── Job / Education entries ────────────────────────────── */
+
+.entry {
+    margin-bottom: 8pt;
+    break-inside: avoid;
+    page-break-inside: avoid;
+}
+
+.dates {
+    font-size: 9.5pt;
+    color: #555555;
+    margin-top: 5pt;
+    margin-bottom: 0;
+}
+
+.company {
+    font-size: 10.5pt;
+    font-weight: bold;
+    color: #1a1a2e;
+    margin-bottom: 0;
+}
+
+.role {
+    font-size: 10pt;
+    font-style: italic;
+    margin-bottom: 2pt;
+}
+
+ul {
+    margin-left: 12pt;
+    margin-bottom: 2pt;
+}
+
+li {
+    font-size: 10pt;
+    margin-bottom: 1.5pt;
+    line-height: 1.3;
+    text-align: left;
+}
+
+.note {
+    font-size: 9.5pt;
+    color: #555555;
+    font-style: italic;
+    margin-top: 2pt;
+    margin-bottom: 4pt;
+}
+
+/* ── Skills / Kernkompetenzen ───────────────────────────── */
+
+.skill-row {
+    font-size: 10.5pt;
+    margin-bottom: 1.5pt;
+    line-height: 1.3;
+}
+
+.skill-row strong {
+    font-weight: bold;
+}

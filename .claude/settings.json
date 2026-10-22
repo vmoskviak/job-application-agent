@@ -1,0 +1,17 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "mcp__gmail.*delete.*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/scripts/hooks/guard_gmail_delete.py\"",
+            "timeout": 10,
+            "statusMessage": "Перевіряю правила Gmail..."
+          }
+        ]
+      }
+    ]
+  }
+}

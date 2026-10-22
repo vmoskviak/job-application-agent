@@ -1,0 +1,305 @@
+# Треки пошуку: ключові слова для скорингу, варіант CV, пріоритет (менше = важливіше),
+# excluded: true — на трек не подаємось, letter — блоки Anschreiben для tailoring.
+default_priority: 7
+tracks:
+  B1_hausverwaltung:
+    keywords:
+    - Hausverwaltung
+    - Objektverwaltung
+    - Mieterbetreuung
+    - WEG-Verwaltung
+    - Immobilienverwaltung
+    - Wohnungsverwaltung
+    - Bewirtschaftung
+    - Immobilienkauffrau
+    - Hausmeister
+    variant: buero
+    salary: '48000'
+    priority: 5
+    letter:
+      anlass: Die Ausschreibung von [FIRMA] als [JOBTITEL] passt zu dem, was ich in den letzten Jahren gemacht habe.
+        Deshalb bewerbe ich mich bei [FIRMA].
+      fit: Bei der Beispiel Logistik GmbH habe ich Termine, Reisen und den Posteingang für ein Team von zwölf Personen
+        organisiert und die Ablage auf ein digitales System umgestellt.
+      transfer: Ich arbeite strukturiert, halte Fristen ein und spreche Probleme früh an. Deutsch ist meine Muttersprache,
+        Englisch spreche ich verhandlungssicher.
+      salary_hint: '48000'
+  B2_foerderwesen:
+    keywords:
+    - Förderwesen
+    - Zuwendung
+    - Antragsbearbeitung
+    - Förderprogramm
+    - Verwaltungssachbearbeiter
+    - öffentliche Verwaltung
+    - Sachbearbeiter
+    - Bescheiderstellung
+    - Förderung
+    variant: buero
+    salary: '48000'
+    priority: 4
+    letter:
+      anlass: Die Ausschreibung von [FIRMA] als [JOBTITEL] passt zu dem, was ich in den letzten Jahren gemacht habe.
+        Deshalb bewerbe ich mich bei [FIRMA].
+      fit: Bei der Beispiel Logistik GmbH habe ich Termine, Reisen und den Posteingang für ein Team von zwölf Personen
+        organisiert und die Ablage auf ein digitales System umgestellt.
+      transfer: Ich arbeite strukturiert, halte Fristen ein und spreche Probleme früh an. Deutsch ist meine Muttersprache,
+        Englisch spreche ich verhandlungssicher.
+      salary_hint: '48000'
+  B3_versicherung:
+    keywords:
+    - Versicherung
+    - Schaden
+    - Schadensachbearbeiter
+    - Vertragsbearbeitung
+    - Inputmanagement
+    - Posteingang Versicherung
+    - Versicherungskaufmann
+    - Betrieb Versicherung
+    - Underwriting
+    variant: buero
+    salary: '48000'
+    priority: 5
+    letter:
+      anlass: Die Ausschreibung von [FIRMA] als [JOBTITEL] passt zu dem, was ich in den letzten Jahren gemacht habe.
+        Deshalb bewerbe ich mich bei [FIRMA].
+      fit: Bei der Beispiel Logistik GmbH habe ich Termine, Reisen und den Posteingang für ein Team von zwölf Personen
+        organisiert und die Ablage auf ein digitales System umgestellt.
+      transfer: Ich arbeite strukturiert, halte Fristen ein und spreche Probleme früh an. Deutsch ist meine Muttersprache,
+        Englisch spreche ich verhandlungssicher.
+      salary_hint: '48000'
+  B4_assistenz:
+    keywords:
+    - Teamassistenz
+    - Assistenz der Geschäftsführung
+    - Executive Assistant
+    - Office Manager
+    - Sekretariat
+    - Büromanagement
+    - Chefsekretärin
+    - Büroleitung
+    - Büroassistenz
+    - Assistenz
+    - Assistentin
+    - Assistent
+    - Persönliche Assistenz
+    - Geschäftsassistenz
+    - Management Assistenz
+    - Projektassistenz
+    - Kanzleiassistenz
+    - Assistenz der GF
+    - Administrative Assistant
+    - Office Assistant
+    - Empfangsassistenz
+    - Assistenz im Sekretariat
+    - Referatsassistenz
+    - Office Management
+    variant: buero
+    salary: '48000'
+    priority: 0
+    letter:
+      anlass: Die Ausschreibung von [FIRMA] als [JOBTITEL] passt zu dem, was ich in den letzten Jahren gemacht habe.
+        Deshalb bewerbe ich mich bei [FIRMA].
+      fit: Bei der Beispiel Logistik GmbH habe ich Termine, Reisen und den Posteingang für ein Team von zwölf Personen
+        organisiert und die Ablage auf ein digitales System umgestellt.
+      transfer: Ich arbeite strukturiert, halte Fristen ein und spreche Probleme früh an. Deutsch ist meine Muttersprache,
+        Englisch spreche ich verhandlungssicher.
+      salary_hint: '48000'
+  B5_hr:
+    keywords:
+    - HR Coordinator
+    - Recruiting
+    - Personalreferent
+    - Talent Acquisition
+    - Personaladministration
+    - Human Resources
+    - HR Assistant
+    - Personalwesen
+    - Recruiter
+    variant: buero
+    salary: '48000'
+    priority: 5
+    letter:
+      anlass: Die Ausschreibung von [FIRMA] als [JOBTITEL] passt zu dem, was ich in den letzten Jahren gemacht habe.
+        Deshalb bewerbe ich mich bei [FIRMA].
+      fit: Bei der Beispiel Logistik GmbH habe ich Termine, Reisen und den Posteingang für ein Team von zwölf Personen
+        organisiert und die Ablage auf ein digitales System umgestellt.
+      transfer: Ich arbeite strukturiert, halte Fristen ein und spreche Probleme früh an. Deutsch ist meine Muttersprache,
+        Englisch spreche ich verhandlungssicher.
+      salary_hint: '48000'
+  B6_logistik:
+    keywords:
+    - Logistik
+    - Auftragsmanagement
+    - Disposition
+    - Speditionskaufmann
+    - Import
+    - Export
+    - Versand
+    - Supply Chain
+    - Auftragsbearbeitung
+    variant: buero
+    salary: '48000'
+    priority: 5
+    letter:
+      anlass: Die Ausschreibung von [FIRMA] als [JOBTITEL] passt zu dem, was ich in den letzten Jahren gemacht habe.
+        Deshalb bewerbe ich mich bei [FIRMA].
+      fit: Bei der Beispiel Logistik GmbH habe ich Termine, Reisen und den Posteingang für ein Team von zwölf Personen
+        organisiert und die Ablage auf ein digitales System umgestellt.
+      transfer: Ich arbeite strukturiert, halte Fristen ein und spreche Probleme früh an. Deutsch ist meine Muttersprache,
+        Englisch spreche ich verhandlungssicher.
+      salary_hint: '48000'
+  B7_oeffentlich:
+    keywords:
+    - Öffentlicher Dienst
+    - TVöD
+    - Stadtwerke
+    - Hochschule
+    - Behörde
+    - Landtag
+    - Ministerium
+    - Kommunal
+    - Interamt
+    - Verwaltungsfachangestellte
+    variant: sachbearbeitung
+    salary: '48000'
+    priority: 4
+    letter:
+      anlass: Die Ausschreibung von [FIRMA] als [JOBTITEL] passt zu dem, was ich in den letzten Jahren gemacht habe.
+        Deshalb bewerbe ich mich bei [FIRMA].
+      fit: Bei der Beispiel Logistik GmbH habe ich Termine, Reisen und den Posteingang für ein Team von zwölf Personen
+        organisiert und die Ablage auf ein digitales System umgestellt.
+      transfer: Ich arbeite strukturiert, halte Fristen ein und spreche Probleme früh an. Deutsch ist meine Muttersprache,
+        Englisch spreche ich verhandlungssicher.
+      salary_hint: '48000'
+  B8_dolmetschen:
+    keywords:
+    - Dolmetsch
+    - Sprachmittl
+    - Übersetz
+    - Translation
+    - Kommunaldolmetsch
+    - Sprachassistenz
+    - Ukrainisch
+    - Deutsch als Fremdsprache
+    - Deutsch als Zweitsprache
+    - Deutschlehr
+    - Sprachlehr
+    - Sprachtrainer
+    - Deutschdozent
+    - Deutschkurs
+    - Integrationskurs
+    - Alphabetisierung
+    - Sprachförder
+    variant: sprache
+    salary: '48000'
+    priority: 1
+    letter:
+      anlass: Die Ausschreibung von [FIRMA] als [JOBTITEL] passt zu dem, was ich in den letzten Jahren gemacht habe.
+        Deshalb bewerbe ich mich bei [FIRMA].
+      fit: Bei der Beispiel Logistik GmbH habe ich Termine, Reisen und den Posteingang für ein Team von zwölf Personen
+        organisiert und die Ablage auf ein digitales System umgestellt.
+      transfer: Ich arbeite strukturiert, halte Fristen ein und spreche Probleme früh an. Deutsch ist meine Muttersprache,
+        Englisch spreche ich verhandlungssicher.
+      salary_hint: '48000'
+  B9_empfang:
+    keywords:
+    - Empfang
+    - Rezeption
+    - Front Office
+    - Empfangsmitarbeiter
+    - Empfangskraft
+    - Gästebetreuung
+    - Besucherbetreuung
+    - Bürokraft
+    - Bürokauffrau
+    - Bürokaufmann
+    - Kaufmännische Assistenz
+    - Kaufmännischer Mitarbeiter
+    - Kaufmännische Mitarbeiterin
+    - Verwaltungsmitarbeiter
+    - Verwaltungskraft
+    - Mitarbeiter Verwaltung
+    - Teamorganisation
+    - Büroorganisation
+    variant: buero
+    salary: '48000'
+    priority: 4
+    letter:
+      anlass: Die Ausschreibung von [FIRMA] als [JOBTITEL] passt zu dem, was ich in den letzten Jahren gemacht habe.
+        Deshalb bewerbe ich mich bei [FIRMA].
+      fit: Bei der Beispiel Logistik GmbH habe ich Termine, Reisen und den Posteingang für ein Team von zwölf Personen
+        organisiert und die Ablage auf ein digitales System umgestellt.
+      transfer: Ich arbeite strukturiert, halte Fristen ein und spreche Probleme früh an. Deutsch ist meine Muttersprache,
+        Englisch spreche ich verhandlungssicher.
+      salary_hint: '48000'
+  T1_ba:
+    keywords:
+    - Business Analyst
+    - Requirements Engineer
+    - Product Analyst
+    - Anforderungsanalyse
+    - Junior BA
+    - IT Business Analyst
+    variant: ba
+    salary: '48000'
+    excluded: true
+  T2_it:
+    keywords:
+    - IT Service
+    - ITSM
+    - IT-Koordinator
+    - Junior Tester
+    - Technical Writer
+    - QA
+    - Testkoordinator
+    - Service Desk
+    - ServiceNow
+    variant: trainee
+    salary: '48000'
+    priority: 6
+  T3_pmo:
+    keywords:
+    - Project Manager
+    - PMO
+    - Projektkoordinator
+    - Projektassistenz
+    - Junior Projektmanager
+    variant: trainee
+    salary: '48000'
+    excluded: true
+  T4_trainee:
+    keywords:
+    - Trainee
+    - Graduate Program
+    - Nachwuchsführungskraft
+    - Einstiegsprogramm
+    - Management Trainee
+    variant: trainee
+    salary: '48000'
+    excluded: true
+  T5_agile:
+    keywords:
+    - Scrum Master
+    - Agile Coach
+    - Agile Master
+    - Agilist
+    - Agile Transformation
+    - Scrum
+    - Kanban
+    variant: agile
+    salary: '48000'
+    priority: 0
+  T6_prozess:
+    keywords:
+    - Prozessmanager
+    - Prozessmanagement
+    - Prozessdesign
+    - Prozessoptimierung
+    - Geschäftsprozess
+    - BPMN
+    - Prozessanalyse
+    - Prozessberater
+    variant: ba
+    salary: '48000'
+    excluded: true

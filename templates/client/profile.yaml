@@ -1,0 +1,32 @@
+# Контакти й поля форм кандидата.
+slug: __SLUG__
+status: paused          # active | paused | placed — cron бере лише active
+first_name: ''
+last_name: ''
+salutation: Frau        # Frau | Herr — для форм порталів
+email: ''               # адреса в CV й Anschreiben
+# Особиста скринька кандидата: туди після кожного рану з поданими заявками йде
+# короткий звіт (куди, на яку роль, два-три речення). Порожньо = не слати.
+report_email: ''
+phone: ''               # +49 ...
+phone_prefix: '+49'
+street: ''
+zip_code: ''
+city: ''
+country: Deutschland
+nationality: ''         # як писати у формах: Deutsch, Ukrainisch, ...
+availability: ab sofort
+birth_date: ''          # ISO: 1990-01-15
+default_salary: ''      # Brutto/Jahr, лише цифри: '48000'
+# Рівні мов для pre-screening порталів (XING питає перед Easy Apply):
+# префікси опцій A1-A2 · B1-B2 · C1 · C2
+language_levels: {Deutsch: C1, Englisch: B1-B2}
+# Відповіді на типові додаткові питання портальних форм. pattern — regex по
+# тексту питання; answer — текст у поле, choice: yes|no — radio Ja/Nein.
+# Питання, яких тут нема, бот не вгадує: заявка йде оператору в manual.
+form_answers: []
+# - {pattern: 'vollzeit oder teilzeit|stunden pro woche', answer: 'Vollzeit'}
+# - {pattern: 'weitere stellen|talentpool|bewerberpool', choice: 'no'}
+# додаткові рядки в шапці CV (LinkedIn, Staatsangehörigkeit, Arbeitserlaubnis)
+cv_contact_extra: []
+photo: photo.jpeg       # файл у корені папки клієнта; прибрати рядок, якщо без фото

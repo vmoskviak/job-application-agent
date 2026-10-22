@@ -1,0 +1,14 @@
+# Вечірній пошук: що й де шукати. {year} підставляється поточним роком.
+focus: ''
+do_not_search: ''
+query_groups: []
+# - name: Назва групи
+#   queries:
+#   - '"Teamassistenz" OR "Office Manager" Stadt {year}'
+#   - '"Teamassistenz" Stadt site:linkedin.com/jobs {year}'
+career_pages_keywords: ''
+career_pages: []
+# - {name: Stadt X, url: 'https://karriere.example.de/'}
+extra_sources: ''
+stepstone_facet: ''              # URL результатів StepStone з фасетами di=/sdi=
+indeed_listings: []

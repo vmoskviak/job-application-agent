@@ -1,0 +1,12 @@
+[
+  {
+    "url": "https://www.stepstone.de/stellenangebote--Teamassistenz-m-w-d-Beispielstadt-Beispiel-GmbH--10000001-inline.html",
+    "expect_liveness": "live",
+    "note": "приклад: підставте живу вакансію перед запуском"
+  },
+  {
+    "url": "https://careers.example.com/job/Beispielstadt-Junior-Product-Owner/1000000001/",
+    "expect_liveness": "closed",
+    "note": "приклад закритої вакансії"
+  }
+]

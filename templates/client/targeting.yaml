@@ -1,0 +1,28 @@
+# Фільтри відбору вакансій.
+min_score: 25
+max_submissions_per_run: 25      # аварійний запобіжник: більше = збій фільтра
+cleanup_min_tracker_rows: 0      # підняти, коли трекер виросте (захист від битого парсингу)
+# Регулярні вирази по назві ролі: на таке не подаємось ніколи.
+excluded_title_patterns:
+- '\bsenior\b'
+- '\b(?:team\s*)?lead\b'
+- '\bpraktik(?:um|ant)'
+- '\bausbildung\b'
+- '\bwerkstudent'
+# Ознаки в тексті вакансії (назва + опис), регулярні вирази без урахування
+# регістру. Для умов, яких у назві ролі не буває: Teilzeit, Homeoffice-Anteil.
+#   description_bonus: бал додається до score вакансії (вище в черзі подачі)
+#   excluded_description_patterns: збіг pattern без збігу unless = не подаємось
+description_bonus: []
+# - {pattern: 'teilzeit|wochenstunden', points: 30}
+excluded_description_patterns: []
+# - {pattern: '\bvollzeit\b', unless: 'teilzeit|wochenstunden'}
+# Компанії, що приймають заявки лише через портал (email видаляють).
+email_dead_companies: []
+# Досяжні міста/регіони, lowercase, усі написання (умлаути й без, англійська
+# назва землі для LinkedIn). Remote/Home-Office/Hybrid проходять самі.
+region_label: ''
+locations: []
+# any: будь-яка згадка remote/Homeoffice/hybrid рятує чуже місто.
+# full: лише повністю віддалена робота (пошук в одному місті через дорогу).
+remote_policy: any

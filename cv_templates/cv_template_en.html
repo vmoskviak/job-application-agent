@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <link rel="stylesheet" href="cv_style.css">
+</head>
+<body>
+
+<div class="header">
+  <div class="header-left">
+    <h1>{{ name }}</h1>
+    <p class="cv-subtitle">{{ title }}</p>
+    {% for line in contact %}
+    <p class="contact-line">{{ line }}</p>
+    {% endfor %}
+  </div>
+  {% if photo_path %}
+  <img class="photo" src="{{ photo_path }}">
+  {% endif %}
+</div>
+
+<h2>Profile</h2>
+<p>{{ profile }}</p>
+
+{% if kernkompetenzen %}
+<h2>Core Competencies</h2>
+{% for label, value in kernkompetenzen %}
+<p class="skill-row"><strong>{{ label }}:</strong>&nbsp; {{ value }}</p>
+{% endfor %}
+{% endif %}
+
+<h2>Professional Experience</h2>
+{% for job in experience %}
+<div class="entry">
+  <p class="dates">{{ job.dates }}</p>
+  <p class="company">{{ job.company }}</p>
+  <p class="role">{{ job.title }}</p>
+  <ul>
+    {% for bullet in job.bullets %}
+    <li>{{ bullet }}</li>
+    {% endfor %}
+  </ul>
+  {% if job.note %}
+  <p class="note">{{ job.note }}</p>
+  {% else %}
+  <p style="margin-bottom:4pt;"></p>
+  {% endif %}
+</div>
+{% endfor %}
+
+<h2>Education</h2>
+{% for edu in education %}
+<div class="entry">
+  <p class="dates">{{ edu.dates }}</p>
+  <p class="company">{{ edu.inst }}</p>
+  <p class="role">{{ edu.deg }}</p>
+  {% if edu.note %}
+  <p class="note">{{ edu.note }}</p>
+  {% else %}
+  <p style="margin-bottom:4pt;"></p>
+  {% endif %}
+</div>
+{% endfor %}
+
+<h2>Skills &amp; Tools</h2>
+{% for label, value in skills %}
+<p class="skill-row"><strong>{{ label }}:</strong>&nbsp; {{ value }}</p>
+{% endfor %}
+
+</body>
+</html>

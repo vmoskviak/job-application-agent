@@ -1,0 +1,17 @@
+#!/bin/bash
+# Запуск будь-чого з рушія з каталогу даних клієнта:
+#   js new_app.py --discover var/run/urls.txt
+#   js -m bot.filters.rules var/run/digest.json
+#   js scripts/gmail_rest.py check jobs
+# Клієнт: змінна JOBSEARCH_CLIENT або прапорець --client <slug>.
+set -euo pipefail
+ENGINE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+PY="$ENGINE/.venv/bin/python"
+[ -x "$PY" ] || PY="${JOBSEARCH_PYTHON:-python3}"
+export PYTHONPATH="$ENGINE${PYTHONPATH:+:$PYTHONPATH}"
+export JOBSEARCH_ENGINE="$ENGINE"
+case "${1:-}" in
+  "") echo "usage: js <script.py | -m module> [args]" >&2; exit 2 ;;
+  -m) exec "$PY" "$@" ;;
+  *)  script="$1"; shift; exec "$PY" "$ENGINE/$script" "$@" ;;
+esac

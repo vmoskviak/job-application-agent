@@ -1,0 +1,81 @@
+# Дані CV. Варіант CV обирається під трек (tracks.yaml → variant).
+variants: [agile, ba, trainee, sachbearbeitung, buero, sprache]
+default_variant: agile
+experience:
+# bullets: список (однаковий для всіх варіантів) або мапа варіант → список;
+# ключ default — для варіантів без власних булітів.
+- dates: 03.2021 – 12.2025
+  company: Beispiel Logistik GmbH, Düsseldorf
+  title: Teamassistentin
+  note: 'Zeugnis: sehr gut'
+  bullets:
+    agile:
+    - Moderation von Daily, Planning und Retrospektive für ein Team von zwölf Personen
+    - Pflege des Boards und Nachverfolgung von Hindernissen
+    buero:
+    - Termin- und Reiseplanung für die Bereichsleitung und das Team
+    - Bearbeitung des Posteingangs und Umstellung der Ablage auf ein digitales System
+    - Vorbereitung von Besprechungen und Protokollführung
+    sprache:
+    - Schriftliche Aufbereitung von Abläufen für neue Kolleginnen und Kollegen
+    default:
+    - Organisation des Teambüros, Terminplanung und Protokollführung
+- dates: 08.2017 – 02.2021
+  company: Muster Versicherung AG, Köln
+  title: Sachbearbeiterin
+  note: ''
+  bullets:
+    sachbearbeitung:
+    - Bearbeitung von Anträgen und Schadenmeldungen im Posteingang
+    - Erstellung von Bescheiden und Klärung offener Vorgänge mit den Fachbereichen
+    default:
+    - Bearbeitung von Anträgen und Schadenmeldungen
+education:
+- dates: 2013 – 2017
+  inst: Hochschule Musterstadt
+  deg: Bachelor of Arts, Betriebswirtschaftslehre
+  note: 'Abschlussnote: 2,1'
+ehrenamt:
+  variants: [sprache, buero]
+  entries:
+  - dates: '2019'
+    org: Musterverein e. V., Düsseldorf
+    role: Ehrenamtliche Helferin in der Hausaufgabenbetreuung
+    bullets:
+    - Betreuung einer Gruppe von zehn Kindern
+skills:
+  agile:
+  - [Agile Methoden, Scrum · Kanban · Moderation]
+  - [Tools, Jira · Confluence · MS Office]
+  - [Sprachen, Deutsch (Muttersprache) · Englisch (C1)]
+  ba:
+  - [Methoden, Anforderungsanalyse · Prozessdokumentation]
+  - [Tools, Jira · Confluence · MS Office]
+  - [Sprachen, Deutsch (Muttersprache) · Englisch (C1)]
+  trainee:
+  - [Methoden, Scrum · Kanban]
+  - [Tools, MS Office · Jira]
+  - [Sprachen, Deutsch (Muttersprache) · Englisch (C1)]
+  sachbearbeitung:
+  - [Verwaltung & Tools, MS Office · SAP-Grundkenntnisse · Dokumentenmanagement]
+  - [Sprachen, Deutsch (Muttersprache) · Englisch (C1)]
+  buero:
+  - [Büromanagement, Terminplanung · Reiseorganisation · Ablage · MS Office]
+  - [Sprachen, Deutsch (Muttersprache) · Englisch (C1)]
+  sprache:
+  - [Sprachen, Deutsch (Muttersprache) · Englisch (C1) · Französisch (B1)]
+  - [Vermittlung, Abläufe verständlich erklären · schriftliche Aufbereitung]
+# Вкладення до email-заявки. variants — чіпляти лише до цих варіантів CV;
+# portal: true — файл іде також у портальні форми (коротка добірка).
+attachments:
+- file: 01_Zeugnis_BeispielLogistik_2025.pdf
+  label: Arbeitszeugnis Beispiel Logistik GmbH (2025)
+  portal: true
+- file: 02_Zeugnis_MusterVersicherung_2021.pdf
+  label: Arbeitszeugnis Muster Versicherung AG (2021)
+  portal: true
+- file: 03_Bachelorzeugnis_2017.pdf
+  label: Bachelorzeugnis (2017)
+- file: 04_Sprachzertifikat_Englisch.pdf
+  label: Sprachzertifikat Englisch C1
+  variants: [agile, sachbearbeitung]

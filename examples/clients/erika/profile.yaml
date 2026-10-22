@@ -1,0 +1,22 @@
+# Контакти й поля форм. Вигадана кандидатка: приклад і тестова фікстура.
+slug: erika
+status: active          # active | paused | placed
+first_name: Erika
+last_name: Mustermann
+salutation: Frau
+email: erika.mustermann@example.com
+report_email: erika.privat@example.com
+phone: +49 30 1234567
+phone_prefix: '+49'
+street: Musterstraße 1
+zip_code: '40210'
+city: Düsseldorf
+country: Deutschland
+nationality: Deutsch
+availability: ab sofort
+birth_date: '1990-01-15'
+default_salary: '48000'
+# додаткові рядки в шапці CV після міста й телефону/пошти
+cv_contact_extra:
+- linkedin.com/in/erika-mustermann-example
+photo: photo.jpeg

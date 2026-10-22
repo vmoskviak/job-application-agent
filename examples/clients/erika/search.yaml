@@ -1,0 +1,24 @@
+# Вечірній пошук: що й де шукати. Рендериться в промпт evening-агента.
+# {year} у запиті підставляється поточним роком.
+focus: >
+  Головна ціль — Office/Assistenz; Sachbearbeitung — підстраховка для обсягу.
+do_not_search: >
+  Trainee, Senior/Lead, Vertrieb, Entwickler.
+query_groups:
+- name: Office/Assistenz (активна ціль)
+  queries:
+  - '"Teamassistenz" OR "Office Manager" OR "Assistenz Geschäftsführung" Düsseldorf {year}'
+  - '"Office Manager" OR "Teamassistenz" Düsseldorf site:linkedin.com/jobs {year}'
+  - '"Assistenz" OR "Sekretariat" Düsseldorf Köln site:xing.com/jobs {year}'
+- name: Sachbearbeitung (підстраховка)
+  queries:
+  - '"Sachbearbeitung" OR "Sachbearbeiter Verwaltung" NRW {year}'
+career_pages_keywords: Assistenz / Office Management / Sekretariat
+career_pages:
+- {name: Düsseldorf Stadt, url: 'https://karriere.duesseldorf.de/'}
+- {name: Interamt (öД), url: 'https://interamt.de/koop/app/trefferliste'}
+# необов'язкові блоки:
+extra_sources: ''
+stepstone_facet: 'https://www.stepstone.de/jobs/in-duesseldorf?radius=50&di=Administration&sdi=250803&sdi=250846&sdi=250955'
+indeed_listings:
+- 'https://de.indeed.com/jobs?q=Assistenz+OR+Office+Manager&l=Düsseldorf&radius=50'

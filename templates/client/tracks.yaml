@@ -1,0 +1,14 @@
+# Треки пошуку. Вакансія отримує трек за ключовими словами в назві й описі.
+#   keywords  слова/стеми для скорингу
+#   variant   який варіант CV (cv.yaml → variants) іде на цей трек
+#   priority  менше = важливіше (порядок подачі в межах одного запуску)
+#   salary    зарплатне очікування на трек, якщо відрізняється від default_salary
+#   excluded  true — на трек не подаємось, але він потрібен, щоб відсіювати
+#   letter    блоки Anschreiben (anlass/fit/transfer/salary_hint) для tailoring;
+#             [FIRMA] і [JOBTITEL] підставляються
+default_priority: 7
+tracks: {}
+# A1_beispiel:
+#   keywords: [Teamassistenz, Office Manager, Sekretariat]
+#   variant: standard
+#   priority: 0

@@ -1,0 +1,16 @@
+# Поштові акаунти й браузерний профіль. Токени тут НЕ лежать: лише назви
+# каталогів у ~/.gmail-mcp і ~/.playwright-mcp на машині запуску.
+gmail:
+  jobs:
+    address: erika.mustermann.jobs@example.com
+    creds_dir: erika-jobs
+    role: Відправка заявок, job-alerts
+    may_delete: true
+  main:
+    address: erika.mustermann@example.com
+    creds_dir: erika-main
+    role: Читання + відповіді роботодавцям у thread
+    may_delete: false
+    rescue_trash: false
+send_from: jobs
+playwright_profile: erika

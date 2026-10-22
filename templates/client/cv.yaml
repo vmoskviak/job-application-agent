@@ -1,0 +1,35 @@
+# Дані CV. Один варіант CV на групу схожих ролей: різний порядок і зміст
+# булітів та скілів під ту саму біографію. Почати можна з одного варіанта.
+variants: [standard]
+default_variant: standard
+experience: []
+# - dates: 03.2021 – 12.2025
+#   company: Firma GmbH, Stadt
+#   title: Position
+#   note: ''                       # напр. 'Zeugnis: sehr gut'
+#   bullets:                       # список або мапа варіант → список
+#     standard:
+#     - Що робила, з цифрою чи результатом
+#     default:
+#     - Нейтральне формулювання для варіантів без власних булітів
+education: []
+# - dates: 2013 – 2017
+#   inst: Hochschule
+#   deg: Abschluss, Fach
+#   note: ''
+#   variants: [agile]            # необов'язково: запис лише в цих варіантах CV
+# Окрема секція «Weiterbildung & Zertifikate» (ATS шукає сертифікати саме там);
+# поля як в education, порожній список = секції нема.
+certificates: []
+ehrenamt:
+  variants: []                     # у яких варіантах CV показувати
+  entries: []
+skills:
+  standard: []
+# - [Заголовок рядка, Значення · Значення · Значення]
+# Вкладення до email-заявки (файли в attachments/). variants — лише для цих
+# варіантів CV; portal: true — файл іде також у портальні форми.
+attachments: []
+# - file: 01_Zeugnis_Firma_2025.pdf
+#   label: Arbeitszeugnis Firma GmbH (2025)
+#   portal: true
