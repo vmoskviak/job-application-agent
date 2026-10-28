@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
-"""Failure alert без Claude і MCP — прямий Gmail REST.
+"""Failure alert without Claude or MCP: direct Gmail REST.
 
-Оновлює access token через refresh_token з ~/.gmail-mcp (creds акаунта
-`send_from` активного клієнта) і шле лист оператору. Працює навіть коли
-claude CLI / npx / MCP лежать.
+Refreshes the access token via the refresh_token from ~/.gmail-mcp (creds of the
+active client's `send_from` account) and mails the operator. Works even when the
+claude CLI / npx / MCP are down.
 
-Адресат: env JOBSEARCH_ALERT_TO (задається в /root/.claude-env). Якщо у клієнта
-налаштовано Telegram (accounts.yaml → telegram), алерт іде туди одразу, а пошта
-й черга зведеного листа не використовуються.
+Recipient: env JOBSEARCH_ALERT_TO (set in /root/.claude-env). If the client has
+Telegram configured (accounts.yaml -> telegram), the alert goes there right away and
+neither mail nor the summary-mail queue is used.
 
-Використання:
+Usage:
     send_alert.py --run morning --message "timeout 3h" [--log-tail "..."]
 """
 
@@ -64,13 +64,13 @@ RUN_NAMES = {"morning": "Morgenlauf", "evening": "Abendlauf"}
 
 
 def alert_subject(slug: str, run: str, message: str) -> str:
-    """Тема без «run failed»: алерт буває й про лист, що чекає відповіді."""
+    """Subject without "run failed": an alert can also be about a mail awaiting a reply."""
     return f"[jobsearch ALERT] {slug} {RUN_NAMES.get(run, run)}: {message[:70]}"
 
 
 def send_alert(run: str, message: str, log_tail: str = "") -> None:
     now = datetime.now().strftime("%Y-%m-%d %H:%M")
-    # Лист читає оператор; уся пошта рушія німецькою. Хвіст лога лишається як є.
+    # The operator reads the mail; all engine mail is in German. The log tail stays as is.
     body = (
         f"Klient: {_c.slug}\n"
         f"Lauf: {RUN_NAMES.get(run, run)}\n"
@@ -105,26 +105,26 @@ def main() -> int:
     parser.add_argument("--message", required=True)
     parser.add_argument("--log-tail", default="")
     parser.add_argument("--queue", action="store_true",
-                        help="не слати, а поставити в чергу до вечірнього листа")
+                        help="do not send, queue for the evening mail instead")
     args = parser.parse_args()
     from bot import notify as _notify
 
     if _notify.configured(_c):
-        # Telegram є: алерт іде одразу, і в чергу, і в лист не стає (оператор
-        # читає Telegram, пошта рушія йому не потрібна)
+        # Telegram exists: the alert goes out right away and enters neither the queue
+        # nor the mail (the operator reads Telegram, engine mail is not needed)
         try:
             _notify.notify(_c, _notify.alert_text(args.run, args.message, args.log_tail, _c.telegram["lang"]))
             print(f"[alert] telegram: {args.message[:80]}")
             return 0
-        except Exception as e:  # noqa: BLE001 — Telegram упав: далі старим каналом
-            print(f"[alert] telegram FAILED ({e}), далі поштою", file=sys.stderr)
+        except Exception as e:  # noqa: BLE001, Telegram failed: fall back to the old channel
+            print(f"[alert] telegram FAILED ({e}), falling back to mail", file=sys.stderr)
     if args.queue:
         from bot import operator_report as rep
         rep.queue_alert(_c.var / "run", args.run, args.message, args.log_tail)
         print(f"[alert] queued: {args.message[:80]}")
         return 0
     if not ALERT_TO:
-        print("[alert] JOBSEARCH_ALERT_TO не задано, алерт не надіслано", file=sys.stderr)
+        print("[alert] JOBSEARCH_ALERT_TO not set, alert not sent", file=sys.stderr)
         return 1
     try:
         send_alert(args.run, args.message, args.log_tail)

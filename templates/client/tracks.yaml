@@ -1,12 +1,12 @@
-# Треки пошуку. Вакансія отримує трек за ключовими словами в назві й описі.
-#   keywords  слова/стеми для скорингу
-#   variant   який варіант CV (cv.yaml → variants) іде на цей трек
-#   priority  менше = важливіше (порядок подачі в межах одного запуску)
-#   salary    зарплатне очікування на трек, якщо відрізняється від default_salary
-#   excluded  true — на трек не подаємось, але він потрібен, щоб відсіювати
-#   cv_file   контрактний ринок: файл CV у attachments/, який іде вкладенням на цей трек
-#   letter    блоки Anschreiben (anlass/fit/transfer/salary_hint) для tailoring;
-#             [FIRMA] і [JOBTITEL] підставляються
+# Search tracks. A job gets a track by keywords in its title and description.
+#   keywords  words/stems for scoring
+#   variant   which CV variant (cv.yaml -> variants) goes to this track
+#   priority  lower = more important (submission order within one run)
+#   salary    salary expectation for the track, if it differs from default_salary
+#   excluded  true: never apply on this track, but it is needed to filter out
+#   cv_file   contract market: CV file in attachments/ that goes as the attachment for this track
+#   letter    Anschreiben blocks (anlass/fit/transfer/salary_hint) for tailoring;
+#             [FIRMA] and [JOBTITEL] are substituted
 default_priority: 7
 tracks: {}
 # A1_beispiel:

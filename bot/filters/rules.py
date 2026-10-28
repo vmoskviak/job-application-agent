@@ -373,10 +373,11 @@ def parse_tracker_applications(tracker_path: Path) -> list[dict]:
         if date_re.match(cells[1]):
             # legacy-формат: | date | title | company, location | status |
             company = cells[3].split(",")[0].strip()
-            apps.append({"company": company, "title": cells[2], "notes": ""})
+            apps.append({"company": company, "title": cells[2], "notes": "", "status": cells[4]})
         elif len(cells) >= 6 and (date_re.match(cells[2]) or cells[2] in ("—", "")):
             # основна таблиця: | # | Date | Company | Position | Source | Salary | Status | Last update | Next | Notes |
-            apps.append({"company": cells[3], "title": cells[4], "notes": cells[10] if len(cells) > 11 else ""})
+            apps.append({"company": cells[3], "title": cells[4], "notes": cells[10] if len(cells) > 11 else "",
+                         "status": cells[7] if len(cells) > 7 else ""})
     return apps
 
 

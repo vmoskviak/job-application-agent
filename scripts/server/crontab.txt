@@ -1,19 +1,19 @@
-# Crontab для сервера (root у LXC), TZ=Europe/Berlin.
-# Встановлення: crontab /opt/jobsearch-autopilot/scripts/server/crontab.txt
+# Crontab for the server (root in LXC), TZ=Europe/Berlin.
+# Install: crontab /opt/jobsearch-autopilot/scripts/server/crontab.txt
 #
-# 20:30 — evening discover (дайджест, без подач) для всіх активних клієнтів
-# 03:00 — morning apply (подачі + пошта + звіт) для всіх активних клієнтів
+# 20:30: evening discover (digest, no applications) for all active clients
+# 03:00: morning apply (applications + mail + report) for all active clients
 #
-# Клієнти йдуть по черзі під одним локом; timeout одного рану 3h. З двома
-# активними клієнтами ранкове вікно може тягнутись до ~09:00 — якщо це
-# заважає денному ліміту підписки, зсунути старт раніше.
+# Clients run one after another under a single lock; one run times out after 3h.
+# With two active clients the morning window can stretch to about 09:00. If that
+# collides with the daily subscription limit, move the start earlier.
 #
-# Trial-режим (shadow): розкоментувати APPLY_MODE-рядок, закоментувати live.
+# Trial mode (shadow): uncomment the APPLY_MODE line, comment out the live one.
 
 SHELL=/bin/bash
 PATH=/usr/local/bin:/usr/bin:/bin:/usr/local/sbin:/usr/sbin
 
 30 20 * * * /opt/jobsearch-autopilot/scripts/server/run_all.sh evening
 0 3 * * *   /opt/jobsearch-autopilot/scripts/server/run_all.sh morning
-# Trial (shadow, dry-run): замість live-рядка morning:
+# Trial (shadow, dry-run): instead of the live morning line:
 # 0 3 * * *   APPLY_MODE=dry-run APPLY_GUARD_LIMIT=10 /opt/jobsearch-autopilot/scripts/server/run_all.sh morning

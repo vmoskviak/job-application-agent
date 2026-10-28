@@ -71,15 +71,15 @@ def test_jordan_renders_contract_template():
                    "scrape_failed_title", "excluded_description:onsite_only"):
         assert reason in prompt, reason
     # тіло листа без тире-сполучників
-    assert "без тире як сполучника" in prompt
+    assert "no dashes as connectors" in prompt
     # відповіді на подачі: скан у звіт, без записів у трекер
     assert "js scripts/employer_scan.py --days 2 --json" in prompt
-    assert "Трекер не правити" in prompt
+    assert "Do not edit the tracker" in prompt
 
 
 def test_jordan_report_language_follows_profile():
     prompt = _render("evening", "jordan")
-    assert "англійською" in prompt
+    assert "in English" in prompt
     assert "Мова всієї пошти німецька" not in prompt
 
 

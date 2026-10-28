@@ -26,6 +26,9 @@ def _repo_with_origin(tmp: Path, name: str) -> Path:
     _git(src, "commit", "-q", "-m", "init")
     _git(tmp, "clone", "-q", "--bare", str(src), f"{name}.git")
     _git(tmp, "clone", "-q", str(tmp / f"{name}.git"), name)
+    # push_tracker runs plain `git commit`: the CI runner has no global identity
+    _git(tmp / name, "config", "user.name", "t")
+    _git(tmp / name, "config", "user.email", "t@example.com")
     return tmp / name
 
 

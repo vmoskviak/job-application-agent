@@ -1,10 +1,10 @@
 #!/bin/bash
-# Запуск сервісу чи таймера рушія для одного клієнта (systemd → цей скрипт).
-# Використання: run_service.sh <script-relative-to-engine> <slug> [args...]
+# Run an engine service or timer job for one client (systemd -> this script).
+# Usage: run_service.sh <script-relative-to-engine> <slug> [args...]
 #   run_service.sh scripts/server/telegram_bot.py <slug>
 #   run_service.sh scripts/inbox_watch.py <slug> --days 2 --dry-run
-# Оточення машини береться з /root/.claude-env (рядки export KEY=VALUE):
-# EnvironmentFile у systemd таких рядків не читає, тому source тут.
+# The machine environment comes from /root/.claude-env (lines of export KEY=VALUE):
+# systemd's EnvironmentFile does not read such lines, hence the source here.
 set -uo pipefail
 
 SCRIPT="${1:?usage: run_service.sh <script> <slug> [args...]}"

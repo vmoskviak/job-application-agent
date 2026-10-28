@@ -1,84 +1,91 @@
-# Архітектура
+# Architecture
 
-## Рушій і дані окремо
+## Engine and data apart
 
-Код публічний, дані людей приватні, тому це два репозиторії. Рушій знаходить
-дані через `JOBSEARCH_CLIENTS_DIR` (за замовчуванням сусідній каталог
-`../jobsearch-clients/clients`). У даних клієнта лежить усе, що про людину,
-у рушії немає нічого.
+The code is public, people's data is private, so these are two repositories.
+The engine finds the data through `JOBSEARCH_CLIENTS_DIR` (by default the
+sibling directory `../jobsearch-clients/clients`). The client's data holds
+everything about the person, the engine holds nothing.
 
-Токени й браузерні сесії не лежать у жодному з репозиторіїв: лише на машині
-запуску, у `~/.gmail-mcp/<creds_dir>/` і `~/.playwright-mcp/<profile>/`.
-`accounts.yaml` зберігає тільки назви цих каталогів.
+Tokens and browser sessions live in neither repository: only on the machine
+that runs, in `~/.gmail-mcp/<creds_dir>/` and `~/.playwright-mcp/<profile>/`.
+`accounts.yaml` stores only the names of these directories.
 
-## Один процес, один клієнт
+## One process, one client
 
-`bot/client.py` дає `active()`: клієнта, обраного змінною `JOBSEARCH_CLIENT`.
-`bot/__init__.py` знімає `--client <slug>` з argv у цю змінну до імпорту
-решти пакета, тож прапорець працює в кожній точці входу.
+`bot/client.py` provides `active()`: the client selected by the
+`JOBSEARCH_CLIENT` variable. `bot/__init__.py` takes `--client <slug>` out of
+argv into this variable before the rest of the package is imported, so the
+flag works in every entry point.
 
-Модулі, що раніше тримали дані константами (`bot/apply/candidate.py`,
+Modules that used to hold the data as constants (`bot/apply/candidate.py`,
 `bot/generators/keywords.py`, `bot/filters/rules.py`, `cv_engine.py`,
-`anschreiben_templates.py`, `tailor.py`), читають ті самі константи з YAML
-під час імпорту. Імена констант збережені, тому решта коду й тести не
-змінились.
+`anschreiben_templates.py`, `tailor.py`) read the same constants from YAML at
+import time. The constant names are kept, so the rest of the code and the
+tests did not change.
 
-Ціна такого рішення: в одному процесі не можна обробити двох клієнтів
-поспіль. Для цього проєкту це не обмеження, бо запуск і так один на клієнта
-(окремий лок, окремий браузерний профіль, окремий лог). Якщо колись
-знадобиться, константи треба буде замінити явним параметром контексту.
+The price of this decision: one process cannot handle two clients one after
+another. For this project that is not a limitation, because there is one run
+per client anyway (separate lock, separate browser profile, separate log). If
+it is ever needed, the constants will have to be replaced by an explicit
+context parameter.
 
-## Потік даних за добу
+## Data flow over a day
 
 ```
-вечір   пошук (Claude) → urls.txt → --discover (liveness, скоринг)
-        → bot.filters.rules (виключення, локація, дедуп) → tailoring (Claude)
-        → batch.json → дайджест поштою
-ранок   job-алерти з пошти → той самий discover/filter
-        → --batch-render (PDF/DOCX) → email-подачі
-        → bot.apply.runner (портали) → відповіді роботодавців
-        → follow-ups → cleanup → звіт оператору → git push даних
-щогодини  (контракт, етап 2a) inbox watcher: відповіді й пошта платформ → клас
-        → статус у трекері → картка в Telegram з чернеткою (claude -p під локом)
-        → follow-ups за віком заявки → git push даних
-бот       Telegram long polling: кнопки → диспетчер → reply у треді через gmail_rest
-щогодини  (ринок найму, telegram.mode: notify) той самий watcher без трекера й чернеток:
-        співбесіда/запит → текст оператору в Telegram у ту ж годину; після нічного
-        рану notify_run.py шле нові interview/offer/action_needed з трекера
+evening  search (Claude) → urls.txt → --discover (liveness, scoring)
+         → bot.filters.rules (exclusions, location, dedup) → tailoring (Claude)
+         → batch.json → digest by email
+morning  job alerts from email → the same discover/filter
+         → --batch-render (PDF/DOCX) → email applications
+         → bot.apply.runner (portals) → employer replies
+         → follow-ups → cleanup → report to the operator → git push of the data
+hourly   (contract, phase 2a) inbox watcher: replies and platform mail → class
+         → status in the tracker → card in Telegram with a draft (claude -p under a lock)
+         → follow-ups by application age → git push of the data
+bot      Telegram long polling: buttons → dispatcher → reply in the thread via gmail_rest
+hourly   (employment market, telegram.mode: notify) the same watcher without tracker and drafts:
+         interview/request → text to the operator in Telegram within the same hour; after the nightly
+         run notify_run.py sends new interview/offer/action_needed from the tracker
 ```
 
-Проміжні файли живуть у `<client>/var/run/` з датою в назві й ротуються через
-14 днів. У git даних ідуть трекер, `generate.py` кожного пакета,
-`email_draft.json`, `apply_result.json` і скріншоти підтвердження. PDF і DOCX
-не комітяться: `generate.py` відтворює їх із тих самих даних.
+Intermediate files live in `<client>/var/run/` with the date in the name and
+rotate after 14 days. Into the data git go the tracker, `generate.py` of every
+package, `email_draft.json`, `apply_result.json` and the confirmation
+screenshots. PDF and DOCX are not committed: `generate.py` reproduces them
+from the same data.
 
-## Запуск агента
+## Running the agent
 
-`scripts/server/run_all.sh <mode>` обходить клієнтів зі `status: active` і для
-кожного викликає `run_agent.sh <slug> <mode>`:
+`scripts/server/run_all.sh <mode>` walks the clients with `status: active` and
+calls `run_agent.sh <slug> <mode>` for each:
 
-1. бере спільний лок машини (ліміт підписки й дисплей одні на всіх);
-2. тягне обидва репозиторії;
-3. `scripts/render_run.py` рендерить промпт із `docs/agents/*.md.j2` і конфігу
-   клієнта, MCP-конфіг під його пошту й профіль, settings із хуком;
-4. запускає `claude -p` з робочим каталогом у папці клієнта;
-5. після рану перевіряє Msg-ID, які агент дописав у трекер, і сканує пошту на
-   незакриті запрошення; про збої шле алерт напряму через Gmail REST.
+1. takes the shared machine lock (the subscription limit and the display are
+   shared by all);
+2. pulls both repositories;
+3. `scripts/render_run.py` renders the prompt from `docs/agents/*.md.j2` and
+   the client's config, the MCP config for their mail and profile, settings
+   with the hook;
+4. starts `claude -p` with the working directory in the client folder;
+5. after the run checks the Msg-IDs the agent wrote into the tracker and scans
+   the mail for unclosed invitations; on failures sends an alert directly via
+   Gmail REST.
 
-Для контрактного клієнта поруч із cron живуть два systemd-юніти
-(`scripts/server/systemd/`): сервіс `jobsearch-telegram@<slug>` (бот) і таймер
-`jobsearch-inbox@<slug>` (погодинний `scripts/inbox_watch.py`). Обидва стартують
-через `scripts/server/run_service.sh`, який бере оточення машини з того самого
-файла, що й `run_agent.sh`. Стан етапу 2a лежить у `<client>/var/state/`.
+For the contract client two systemd units live next to cron
+(`scripts/server/systemd/`): the service `jobsearch-telegram@<slug>` (bot) and
+the timer `jobsearch-inbox@<slug>` (hourly `scripts/inbox_watch.py`). Both
+start through `scripts/server/run_service.sh`, which takes the machine
+environment from the same file as `run_agent.sh`. The phase 2a state lives in
+`<client>/var/state/`.
 
-## Запобіжники
+## Safeguards
 
-| Ризик | Що стоїть |
+| Risk | What is in place |
 |---|---|
-| Масова подача через збій фільтра | `max_submissions_per_run`, runner виходить з кодом 3 |
-| Повторна заявка | дедуп проти трекера за компанією й схожістю назви; `apply_result.json` у пакеті |
-| Видалення важливого листа | хук на delete-інструменти Gmail MCP, `may_delete` на акаунт |
-| Вигадані статуси | валідатор Msg-ID після кожного рану |
-| Пропущене запрошення | `employer_scan.py` по обох скриньках, алерт оператору |
-| Чистка на битому трекері | `cleanup_min_tracker_rows`, ліміт 15 видалень за запуск |
-| Обіцяні, але не надіслані вкладення | список «Anlagen» будується з того самого джерела, що й вкладення |
+| Mass submission through a filter failure | `max_submissions_per_run`, the runner exits with code 3 |
+| Repeated application | dedup against the tracker by company and title similarity; `apply_result.json` in the package |
+| Deletion of an important email | hook on the Gmail MCP delete tools, `may_delete` per account |
+| Invented statuses | Msg-ID validator after every run |
+| Missed invitation | `employer_scan.py` over both mailboxes, alert to the operator |
+| Cleanup on a broken tracker | `cleanup_min_tracker_rows`, limit of 15 deletions per run |
+| Attachments promised but not sent | the "Anlagen" list is built from the same source as the attachments |

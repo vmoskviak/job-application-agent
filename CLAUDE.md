@@ -1,73 +1,76 @@
-# Правила роботи в цьому репозиторії
+# Rules for working in this repository
 
-Це рушій. Дані клієнтів лежать окремо, у `JOBSEARCH_CLIENTS_DIR/<slug>/`
-(локально це сусідній репозиторій `../jobsearch-clients/clients/`). Правила
-конкретної людини записані в `CLAUDE.md` її папки і мають пріоритет над цими.
+This is the engine. Client data lives separately, in `JOBSEARCH_CLIENTS_DIR/<slug>/`
+(locally that is the sibling repository `../jobsearch-clients/clients/`). The
+rules of a specific person are written in the `CLAUDE.md` of their folder and
+take priority over these.
 
-## Клієнт
+## Client
 
-- Кожна команда працює з одним клієнтом: `JOBSEARCH_CLIENT=<slug>` або
-  `--client <slug>`. Без цього рушій зупиняється з помилкою, і це правильно.
-- З папки клієнта команди запускаються обгорткою `bin/js`:
+- Every command works with one client: `JOBSEARCH_CLIENT=<slug>` or
+  `--client <slug>`. Without it the engine stops with an error, and that is correct.
+- From the client folder, commands run through the `bin/js` wrapper:
   `js new_app.py ...`, `js -m bot.filters.rules ...`, `js scripts/gmail_rest.py ...`.
-- Нова людина: `docs/onboarding.md`. Сервер: `docs/server_setup.md`.
-- У цей репозиторій не потрапляє нічого про реальних людей: ні імен, ні
-  адрес, ні назв компаній, куди вони подавались. Тести й приклади пишуться на
-  вигаданій `examples/clients/erika`. Перед комітом: `scripts/check_no_private_data.py`.
+- New person: `docs/onboarding.md`. Server: `docs/server_setup.md`.
+- Nothing about real people gets into this repository: no names, no
+  addresses, no names of companies they applied to. Tests and examples are
+  written on the fictional `examples/clients/erika`. Before a commit: `scripts/check_no_private_data.py`.
 
-## Пошта
+## Mail
 
-Стандартна схема на клієнта: `jobs` (окрема скринька під пошук, MCP-сервер
-`gmail`) і `main` (особиста, MCP-сервер `gmail-main`).
+The standard scheme per client: `jobs` (a separate mailbox for the job search,
+MCP server `gmail`) and `main` (personal, MCP server `gmail-main`).
 
-- На акаунті з `may_delete: false` не видаляти нічого й ніколи: ні trash, ні
-  архів. Хук `scripts/hooks/guard_gmail_delete.py` це блокує.
-- Перед будь-яким видаленням на `jobs` прочитати лист через `read_email`,
-  не лише subject. Якщо у листі підходяща вакансія, не видаляти.
-- `batch_delete_emails` заборонено. Видаляти по одному, після звіту.
-- Нові заявки йдуть з акаунта `send_from`. З `main` дозволено лише відповідь
-  роботодавцю в існуючому треді.
-- Eingangsbestätigung: на `jobs` після оновлення трекера можна в кошик, на
-  `main` лист лишається.
-- Пошук алертів за лейблом: `label:job-alerts`, без `in:inbox` і без пробілу в
-  назві лейбла.
+- On an account with `may_delete: false` never delete anything: no trash, no
+  archive. The hook `scripts/hooks/guard_gmail_delete.py` blocks it.
+- Before any deletion on `jobs`, read the email via `read_email`, not just
+  the subject. If the email contains a suitable job, do not delete it.
+- `batch_delete_emails` is forbidden. Delete one at a time, after the report.
+- New applications go out from the `send_from` account. From `main` only a
+  reply to an employer in an existing thread is allowed.
+- Eingangsbestätigung: on `jobs` it may go to the trash after the tracker is
+  updated, on `main` the email stays.
+- Search for alerts by label: `label:job-alerts`, without `in:inbox` and
+  without a space in the label name.
 
-## Заявки
+## Applications
 
-- Перед генерацією перевірити `tracker.md`: чи не подавались уже на цю
-  компанію й роль.
-- Текст Anschreiben і CV на погодження не носити. Генерувати одразу PDF і DOCX.
-- Варіант CV брати з `tracks.yaml` треку. Невідомий варіант рушій мовчки
-  зводить до дефолтного.
-- Три канали подачі:
-  1. **Email**: відправляється автоматично після генерації пакета.
-  2. **Портали й підтримані ATS**: тільки через `bot.apply`
-     (`js new_app.py --apply-batch ...`). Форми руками через Playwright MCP не
-     заповнювати. Нову ATS спершу оформити модулем у `bot/apply/`: dry-run,
-     скріншот, потім live.
-  3. **LinkedIn Easy Apply і непідтримані ATS**: пакет плюс пряме посилання
-     оператору.
-- Компанії з `email_dead_companies` поштою заявок не приймають, канал для них
-  гаситься автоматично.
-- Блок «Anlagen:» у листі без email-каналу містить лише «Lebenslauf»: портал
-  шле тільки CV й Anschreiben, і обіцяні Zeugnisse виглядали б забутими.
-- Папки заявок і `var/run` руками не чистити, це робить `js new_app.py --cleanup`.
-- Msg-ID у трекер писати лише той, що реально отримано з пошти. Вигаданий
-  Msg-ID гірший за порожню клітинку.
+- Before generating, check `tracker.md`: whether an application to this
+  company and role was already made.
+- Do not bring the Anschreiben and CV text for approval. Generate PDF and DOCX right away.
+- Take the CV variant from the track in `tracks.yaml`. An unknown variant is
+  silently reduced to the default by the engine.
+- Three application channels:
+  1. **Email**: sent automatically after the package is generated.
+  2. **Portals and supported ATS**: only through `bot.apply`
+     (`js new_app.py --apply-batch ...`). Do not fill forms by hand through
+     Playwright MCP. A new ATS is first written as a module in `bot/apply/`:
+     dry-run, screenshot, then live.
+  3. **LinkedIn Easy Apply and unsupported ATS**: the package plus a direct
+     link to the operator.
+- Companies from `email_dead_companies` do not accept applications by email,
+  the channel is switched off for them automatically.
+- The "Anlagen:" block in a letter without the email channel contains only
+  "Lebenslauf": the portal sends only the CV and Anschreiben, and promised
+  Zeugnisse would look forgotten.
+- Do not clean application folders and `var/run` by hand, `js new_app.py --cleanup` does that.
+- Write into the tracker only a Msg-ID that was really received from the mail.
+  An invented Msg-ID is worse than an empty cell.
 
-## Скрапінг
+## Scraping
 
-- Порядок: WebFetch, якщо контент неповний, то Playwright. StepStone, Interamt
-  і корпоративні портали одразу через Playwright.
-- `--discover` бере Playwright-профіль клієнта під лок. Не запускати
-  паралельно з Playwright MCP на тому самому профілі.
-- У дайджест потрапляють лише вакансії з `liveness == "live"`.
+- Order: WebFetch, if the content is incomplete, then Playwright. StepStone,
+  Interamt and corporate portals go through Playwright right away.
+- `--discover` takes the client's Playwright profile under a lock. Do not run
+  it in parallel with Playwright MCP on the same profile.
+- Only jobs with `liveness == "live"` get into the digest.
 
-## Код
+## Code
 
-- Тести: `.venv/bin/python -m pytest -q`. Модулі `bot.*` читають конфіг клієнта
-  під час імпорту, тому `tests/conftest.py` виставляє клієнта `erika` до імпортів.
-- Константи на кшталт `candidate.EMAIL` чи `rules.PRIORITY_ORDER` заповнюються
-  з YAML клієнта. Нове персональне значення додається в YAML і
-  `templates/client/`, а не в код.
-- Коментарі й докстрінги українською, як у решті коду.
+- Tests: `.venv/bin/python -m pytest -q`. The `bot.*` modules read the client
+  config at import time, so `tests/conftest.py` sets the client `erika` before the imports.
+- Constants such as `candidate.EMAIL` or `rules.PRIORITY_ORDER` are filled
+  from the client's YAML. A new personal value is added to the YAML and
+  `templates/client/`, not to the code.
+- Comments, docstrings, docs and config comments in English. Existing Ukrainian
+  comments are translated when the surrounding code is touched.

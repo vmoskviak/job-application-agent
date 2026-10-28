@@ -99,6 +99,9 @@ Kind = Literal[
     "linkedin", "github", "website", "location", "country", "resume",
     "cover_letter_file", "cover_letter_text", "free_text", "eeo", "ack", "date",
     "choice", "select", "years", "unknown",
+    # ринок найму (німецькі форми): адреса, дата народження, громадянство, звертання,
+    # річна зарплата, звідки дізнались
+    "street", "zip", "city", "birth_date", "nationality", "salutation", "salary", "source",
 ]
 
 
@@ -151,6 +154,19 @@ YEARS_ALTERNATIVES = (
     r"how many years", r"years of (?:work )?experience", r"jahre (?:berufs)?erfahrung", r"wie viele jahre",
 )
 _YEARS = "|".join(YEARS_ALTERNATIVES)
+# Німецькі форми роботодавців (ринок найму). «Land» лише цілим словом: «Deutschland»
+# у підписі, «Landesvorwahl» телефону. «Ort» теж цілим словом: «Standort» вакансії
+# це не місто кандидата.
+_STREET = r"stra(?:ß|ss)e|street address|hausnummer|\badresse\b|\baddress line"
+_ZIP = r"\bplz\b|postleitzahl|\bzip\b|postal code|postcode"
+_CITY_DE = r"\bort\b|wohnort|\bstadt\b"
+_COUNTRY_DE = r"\bland\b|wohnsitzland"
+_BIRTH = r"geburt|date of birth|birthday|birth date"
+_NATIONALITY = r"staatsangeh|nationalit"
+_SALUTATION = r"\banrede\b|salutation"
+_SALARY = r"gehalt|jahresgehalt|salary expectation|expected salary|desired salary|vergütungsvorstellung"
+_SOURCE = r"aufmerksam geworden|wie haben sie .{0,30}erfahren|how did you hear|woher kennen sie"
+_DATE_DE = r"eintrittstermin|eintrittsdatum|verf(?:ü|ue)gbar ab|fr(?:ü|ue)hest|starttermin|arbeitsbeginn"
 
 
 def classify(f: Field) -> Kind:
@@ -175,6 +191,8 @@ def classify(f: Field) -> Kind:
     # Для checkbox/radio типові правила йдуть раніше за ключові слова:
     # «I agree to receive email updates» — не email.
     if f.type in ("checkbox", "radio"):
+        if f.type == "radio" and _has(_SALUTATION, text):
+            return "salutation"
         if _has(_EEO, text):
             return "eeo"
         # Згода на розсилку лишається незаповненою: це choice, не ack.
@@ -214,13 +232,31 @@ def classify(f: Field) -> Kind:
         return "github"
     if _has(r"website|portfolio|personal site", text):
         return "website"
+    if _has(_BIRTH, text):
+        return "birth_date"
+    if _has(_SALARY, text):
+        return "salary"
+    if _has(_NATIONALITY, text):
+        return "nationality"
+    if _has(_SALUTATION, text):
+        return "salutation"
+    if _has(_SOURCE, text):
+        return "source"
+    if _has(_STREET, text):
+        return "street"
+    if _has(_ZIP, text):
+        return "zip"
+    if _has(_CITY_DE, text):
+        return "city"
+    if _has(_COUNTRY_DE, text):
+        return "country"
     if _has(_EEO, text):
         return "eeo"
     if f.type == "checkbox" and _has(_ACK, text):
         return "ack"
     if f.type == "date" or "pick date" in text or _has(
         r"start date|available|availability", text
-    ):
+    ) or _has(_DATE_DE, text):
         return "date"
     # Комбобокс країни/міста (react-select Greenhouse, автодоповнення Ashby) лишається
     # country/location навіть з довгим питанням: «Which country do you intend to work from?».

@@ -103,7 +103,7 @@ def test_failed_data_pull_alerts_operator(sandbox):
     proc, calls, log = run("jordan")
 
     assert proc.returncode == 0, proc.stderr
-    assert "git pull даних failed" in log
+    assert "data git pull failed" in log
     alerts = _alerts(calls)
     assert len(alerts) == 1, calls
     assert "--run evening" in alerts[0]
@@ -119,7 +119,7 @@ def test_successful_data_pull_sends_no_alert(sandbox):
     proc, calls, log = run("jordan")
 
     assert proc.returncode == 0, proc.stderr
-    assert "git pull даних failed" not in log
+    assert "data git pull failed" not in log
     assert _alerts(calls) == []
     assert any(c.endswith("render_run.py evening --check") for c in calls), calls
 
@@ -133,7 +133,7 @@ def test_failed_engine_pull_alerts_operator(sandbox):
     proc, calls, log = run("jordan")
 
     assert proc.returncode == 0, proc.stderr
-    assert "git pull рушія failed" in log
+    assert "engine git pull failed" in log
     alerts = _alerts(calls)
     assert len(alerts) == 1, calls
     assert "Engine-Pull fehlgeschlagen" in alerts[0]

@@ -1,4 +1,4 @@
-# Контакти й параметри ставки. Вигаданий контрактний клієнт: приклад і тестова фікстура.
+# Contacts and rate parameters. Fictional contract client: example and test fixture.
 slug: jordan
 status: active
 market: contract
@@ -18,6 +18,6 @@ rate:
   daily_target: 760
   usd_hourly_target: 115
   quote_policy: omit_first_contact
-# Рядок під підписом у листах і чернетках відповідей (як у cover_note.build_note)
+# Line under the signature in letters and reply drafts (as in cover_note.build_note)
 cv_contact_extra:
 - 'Freelance (B2B contract) · Remote, CET'

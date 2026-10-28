@@ -1,50 +1,50 @@
-# Контакти й поля форм кандидата.
+# Candidate contacts and form fields.
 slug: __SLUG__
-status: paused          # active | paused | placed — cron бере лише active
+status: paused          # active | paused | placed: cron picks up only active
 first_name: ''
 last_name: ''
-salutation: Frau        # Frau | Herr — для форм порталів
-email: ''               # адреса в CV й Anschreiben
-# Особиста скринька кандидата: туди після кожного рану з поданими заявками йде
-# короткий звіт (куди, на яку роль, два-три речення). Порожньо = не слати.
+salutation: Frau        # Frau | Herr: for portal forms
+email: ''               # address in the CV and Anschreiben
+# The candidate's personal mailbox: after every run with submitted applications a
+# short report goes there (where, which role, two or three sentences). Empty = do not send.
 report_email: ''
-# report_mode: operator (дефолт: оператору Tagesbericht) | candidate (кандидатці звіт,
-# оператору лише «Zu tun») | none (контрактний ринок, етап 2b: без звітів, оператору
-# лише «Hinweis» при збоях рушія).
+# report_mode: operator (default: Tagesbericht to the operator) | candidate (report to the
+# candidate, operator gets only "Zu tun") | none (contract market, phase 2b: no reports,
+# operator gets only a "Hinweis" on engine failures).
 phone: ''               # +49 ...
 phone_prefix: '+49'
 street: ''
 zip_code: ''
 city: ''
 country: Deutschland
-nationality: ''         # як писати у формах: Deutsch, Ukrainisch, ...
+nationality: ''         # as written in forms: Deutsch, Ukrainisch, ...
 availability: ab sofort
 birth_date: ''          # ISO: 1990-01-15
-default_salary: ''      # Brutto/Jahr, лише цифри: '48000'
-# Рівні мов для pre-screening порталів (XING питає перед Easy Apply):
-# префікси опцій A1-A2 · B1-B2 · C1 · C2
+default_salary: ''      # Brutto/Jahr, digits only: '48000'
+# Language levels for portal pre-screening (XING asks before Easy Apply):
+# option prefixes A1-A2 · B1-B2 · C1 · C2
 language_levels: {Deutsch: C1, Englisch: B1-B2}
-# Посилання для полів ATS-форм (LinkedIn, GitHub, сайт). Немає значення: поле лишається порожнім.
+# Links for ATS form fields (LinkedIn, GitHub, website). No value: the field stays empty.
 links: {linkedin: '', github: '', website: ''}   # https://www.linkedin.com/in/<handle>
-# Ставка для питань про compensation/salary у формах (контрактний ринок).
+# Rate for compensation/salary questions in forms (contract market).
 rate: {hourly_target: '', currency_default: EUR}
-# Відповіді на типові додаткові питання портальних форм. pattern — regex по
-# тексту питання; answer — текст у поле, choice: yes|no — radio Ja/Nein.
-# Питання, яких тут нема, бот не вгадує: заявка йде оператору в manual.
-# Один запис може мати і answer (текстове поле), і choice (radio Yes/No);
-# ATS-форми (Ashby, Greenhouse) читають ті самі записи по label + групі питання.
-# Дозвіл на роботу й спонсорство: кожне правило з choice. Yes/No кнопки й radio
-# читають лише правила з choice (запис з одним answer пропускають), комбобокс
-# бере choice раніше за answer; без choice те саме питання в різних полях
-# дістане різні відповіді або жодної. Шаблон обмежений словами ЄС: до питання
-# без країни рушій дописує « [job country: EU]» лише для вакансії в
-# ЄС/ЄЕЗ/Швейцарії, тож для США правило не спрацює й поле піде оператору.
-# Відстань .{0,200}: підпис і група часто те саме довге питання двічі.
+# Answers to common extra questions in portal forms. pattern: regex over the
+# question text; answer: text for the field, choice: yes|no: the Ja/Nein radio.
+# Questions missing here are not guessed by the bot: the application goes to the operator as manual.
+# One entry may have both answer (text field) and choice (Yes/No radio);
+# ATS forms (Ashby, Greenhouse) read the same entries by label + question group.
+# Work permit and sponsorship: every rule with choice. Yes/No buttons and radios
+# read only rules with choice (an entry with answer alone is skipped), a combobox
+# takes choice before answer; without choice the same question in different fields
+# gets different answers or none. The pattern is limited to EU words: to a question
+# without a country the engine appends " [job country: EU]" only for a job in the
+# EU/EEA/Switzerland, so for the US the rule will not fire and the field goes to the operator.
+# Distance .{0,200}: label and group are often the same long question twice.
 form_answers: []
 # - {pattern: 'authori[sz]ed.{0,200}(germany|\beu\b|europe)', answer: 'Yes', choice: 'yes'}
 # - {pattern: '(sponsor|visa).{0,200}(germany|\beu\b|europe)', answer: 'No', choice: 'no'}
 # - {pattern: 'vollzeit oder teilzeit|stunden pro woche', answer: 'Vollzeit'}
 # - {pattern: 'weitere stellen|talentpool|bewerberpool', choice: 'no'}
-# додаткові рядки в шапці CV (LinkedIn, Staatsangehörigkeit, Arbeitserlaubnis)
+# extra lines in the CV header (LinkedIn, Staatsangehörigkeit, Arbeitserlaubnis)
 cv_contact_extra: []
-photo: photo.jpeg       # файл у корені папки клієнта; прибрати рядок, якщо без фото
+photo: photo.jpeg       # file in the root of the client folder; remove the line if there is no photo

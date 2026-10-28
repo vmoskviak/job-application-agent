@@ -1,5 +1,5 @@
-# Щопівгодини вдень о :25 (08:25 … 20:25), з випадковою затримкою до 2 хв,
-# пропущені запуски не наздоганяються. Вечірній ран о 20:30 наповнює чергу, перша подача вранці.
+# Every half hour during the day at :25 (08:25 ... 20:25) with a random delay of up to 2 min;
+# missed runs are not caught up. The evening run at 20:30 fills the queue, the first application goes out in the morning.
 [Unit]
 Description=jobsearch lead dispatch timer (%i)
 

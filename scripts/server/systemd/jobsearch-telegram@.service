@@ -1,5 +1,5 @@
-# Telegram-бот одного клієнта: long polling, кнопки → диспетчер.
-# Установка: cp scripts/server/systemd/*.service scripts/server/systemd/*.timer /etc/systemd/system/
+# Telegram bot for one client: long polling, buttons -> dispatcher.
+# Install: cp scripts/server/systemd/*.service scripts/server/systemd/*.timer /etc/systemd/system/
 #            systemctl daemon-reload && systemctl enable --now jobsearch-telegram@<slug>
 [Unit]
 Description=jobsearch Telegram bot (%i)

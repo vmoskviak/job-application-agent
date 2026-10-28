@@ -1,4 +1,4 @@
-{%- set lang_word = {'en': 'англійською', 'de': 'німецькою', 'uk': 'українською'} -%}
+{%- set lang_word = {'en': 'in English', 'de': 'in German', 'uk': 'in Ukrainian'} -%}
 {%- set mail_lang = lang_word.get(report_lang, report_lang) -%}
 {%- set hn_on = (sources.get('hn_whoishiring') or {}).get('enabled', False) -%}
 {%- set ns = namespace(senders=[], unconfigured=[]) -%}
@@ -7,74 +7,74 @@
 {%- endfor -%}
 {%- set alerts_on = ns.senders|length > 0 -%}
 {%- set alert_from = 'from:' ~ ns.senders[0] if ns.senders|length == 1 else 'from:(' ~ ns.senders|join(' OR ') ~ ')' -%}
-# Evening Contract Agent — Prompt
+# Evening Contract Agent Prompt
 
-**Trigger:** cron (`scripts/server/run_agent.sh <slug> evening`) або ручний запуск оператором.
-**Goal:** зібрати контрактні ліди (Hacker News, email-алерти порталів), відфільтрувати, написати до кожного відібраного короткий cover note і поставити ліди в чергу подач (`scripts/enqueue_leads.py`). **Цей ран нічого не шле і не подає: подачі робить лише диспетчер (`scripts/dispatch_leads.py`) зі своєї черги; дайджест-листа немає.**
+**Trigger:** cron (`scripts/server/run_agent.sh <slug> evening`) or a manual run by the operator.
+**Goal:** collect contract leads (Hacker News, portal email alerts), filter them, write a short cover note for each selected lead and put the leads into the application queue (`scripts/enqueue_leads.py`). **This run sends nothing and submits nothing: only the dispatcher (`scripts/dispatch_leads.py`) submits, from its own queue; there is no digest email.**
 
-## Клієнт цього запуску
+## Client of this run
 
-- **Клієнт:** `{{ slug }}` — {{ full_name }}. Ринок `{{ market }}` (B2B-контракти). Усі дії лише для цієї людини.
-- **Робочий каталог:** `{{ client_root }}` (ти вже в ньому). Тут `tracker.md`, `var/run/`, `var/state/`, `candidate_brief.md`, конфіг `*.yaml`.
-- **Рушій:** `{{ engine }}`. Будь-яка команда рушія запускається обгорткою `js` (вона вже в PATH і знає клієнта): `js -m bot.<module> ...`, `js scripts/<script>.py ...`.
-- **Пошта** (MCP-сервери цього запуску):
+- **Client:** `{{ slug }}` ({{ full_name }}). Market `{{ market }}` (B2B contracts). All actions are for this person only.
+- **Working directory:** `{{ client_root }}` (you are already in it). It holds `tracker.md`, `var/run/`, `var/state/`, `candidate_brief.md`, the `*.yaml` config.
+- **Engine:** `{{ engine }}`. Every engine command runs through the `js` wrapper (it is already in PATH and knows the client): `js -m bot.<module> ...`, `js scripts/<script>.py ...`.
+- **Mail** (MCP servers of this run):
 {%- for alias, acc in gmail.items() %}
-  - `{{ 'gmail' if alias == 'jobs' else 'gmail-' ~ alias }}` = **{{ acc.address }}** ({{ acc.role }}){% if not acc.may_delete %} — **видаляти заборонено**{% endif %}
+  - `{{ 'gmail' if alias == 'jobs' else 'gmail-' ~ alias }}` = **{{ acc.address }}** ({{ acc.role }}){% if not acc.may_delete %}, **deleting forbidden**{% endif %}
 {%- endfor %}
-- **Оператор**: **{{ operator_email }}**{% if operator_mail == 'evening' %}. У цьому рані листів оператору НЕ слати взагалі: він отримує один зведений лист на добу, який збирає обгортка. Усе для нього пишеться у файл (див. нижче).{% else %} (звіти, алерти){% endif %}
-- Специфічні правила клієнта: `CLAUDE.md` у робочому каталозі, якщо він є. Вони мають пріоритет над загальними.
-- `run_agent.sh` уже зробив `git pull` рушія й даних. Самому нічого не тягнути.
+- **Operator**: **{{ operator_email }}**{% if operator_mail == 'evening' %}. In this run do NOT send the operator any email at all: he gets one consolidated email per day, which the wrapper assembles. Everything for him is written to a file (see below).{% else %} (reports, alerts){% endif %}
+- Client-specific rules: `CLAUDE.md` in the working directory, if it exists. They take priority over the general ones.
+- `run_agent.sh` has already done `git pull` of the engine and the data. Do not pull anything yourself.
 
-## Boundaries (жорстко)
+## Boundaries (strict)
 
-- **Запуск неінтерактивний: питання ставити нікому.** Відповіді на уточнення не буде, ран на цьому просто завершиться без результату. Якщо потрібне рішення, обрати варіант, що відповідає цьому промпту, і зазначити це у звіті.
-- **Статус клієнта `{{ profile.status }}`.** `paused` при ручному запуску означає репетицію онбордингу (оператор запустив свідомо): виконати всі кроки повністю, включно з чергою. Не зупинятись і не пропонувати «dry rehearsal».
-- Claude вирішує: витяг лінків з алерт-листів, тіла cover note, текст нотатки рану.
-- **Нотатка рану {{ mail_lang }}** (`report_lang: {{ report_lang }}`).{% if report_lang != "uk" %} Українська лише в stdout-лозі.{% endif %} Мова cover note окрема, її визначає рушій (Step 4).
-- Python вирішує: збір HN, liveness, скоринг, фільтри (engagement, remote, виключення з причинами), мову листа, речення про ставку, збірку нотаток.
-- **Жодних відправок листів, жодних чернеток у Gmail, жодних видалень пошти** в цьому запуску. Подає лише диспетчер зі своєї черги за своїми лімітами; агент не відкриває форм подачі, не логіниться у платформи, не пише рекрутерам і не шле листів нікому, включно з оператором і jobs-скринькою.
-- CV не рендерити й не прикладати. Мотиваційних листів у німецькому форматі тут нема: лише короткі cover note.
-- Вільного веб-пошуку в цьому рані нема: джерела лише ті, що нижче.
-- Всі проміжні файли — у `var/run/` (gitignored), дата у назві. `var/state/` чіпає лише Python.
-- **Працювати ТІЛЬКИ в одному потоці: НЕ використовувати Task/субагентів/паралельні агенти** (headless-запуск обривається до їх завершення). Кроки виконувати послідовно самому.
-- **Жодних фонових команд.** Не використовувати `run_in_background` і не завершувати хід «чекаю на завершення»: у headless-запуску процес на цьому виходить, а команда гине. Довгі команди (`bot.generators.discover`, `bot.scrapers.hn_whoishiring`) запускати звичайним викликом із `timeout` до 3600000 мс і дочекатись виводу.
-- Останній рядок фінального повідомлення — ОБОВ'ЯЗКОВО маркер `EVENING OK: ...` (див. Step 6).
+- **The run is non-interactive: there is nobody to ask questions.** There will be no answer to a clarification; the run simply ends there with no result. If a decision is needed, pick the option that matches this prompt and note it in the report.
+- **Client status `{{ profile.status }}`.** `paused` on a manual run means an onboarding rehearsal (the operator started it deliberately): run all steps in full, including the queue. Do not stop and do not propose a "dry rehearsal".
+- Claude decides: extracting links from alert emails, the cover note bodies, the text of the run note.
+- **Run note {{ mail_lang }}** (`report_lang: {{ report_lang }}`).{% if report_lang != "uk" %} Ukrainian only in the stdout log.{% endif %} The cover note language is separate; the engine determines it (Step 4).
+- Python decides: HN collection, liveness, scoring, filters (engagement, remote, exclusions with reasons), the letter language, the rate sentence, note assembly.
+- **No sending of emails, no drafts in Gmail, no deletion of mail** in this run. Only the dispatcher submits, from its own queue and within its own limits; the agent does not open application forms, does not log in to platforms, does not write to recruiters and does not send email to anyone, including the operator and the jobs mailbox.
+- Do not render or attach a CV. There are no German-format cover letters here: only short cover notes.
+- There is no free web search in this run: only the sources listed below.
+- All intermediate files go to `var/run/` (gitignored), with the date in the name. `var/state/` is touched only by Python.
+- **Work ONLY in a single thread: do NOT use Task/subagents/parallel agents** (a headless run is cut off before they finish). Execute the steps sequentially yourself.
+- **No background commands.** Do not use `run_in_background` and do not end the turn with "waiting for completion": in a headless run the process exits at that point and the command dies. Run long commands (`bot.generators.discover`, `bot.scrapers.hn_whoishiring`) as a normal call with a `timeout` of up to 3600000 ms and wait for the output.
+- The last line of the final message MUST be the marker `EVENING OK: ...` (see Step 6).
 
 ## Step 0: Pre-flight
 
 ```bash
 js -m bot.scrapers.profile
 ```
-Якщо `LOGIN REQUIRED` → вивести в stdout рядок `LOGIN REQUIRED: Playwright-Login nötig` і зупинитись без маркера `EVENING OK`: обгортка сама повідомить оператора.
+If `LOGIN REQUIRED` → print the line `LOGIN REQUIRED: Playwright-Login nötig` to stdout and stop without the `EVENING OK` marker: the wrapper notifies the operator itself.
 
-## Step 1: Hacker News «Who is hiring?»
+## Step 1: Hacker News "Who is hiring?"
 {% if hn_on %}
 ```bash
 js -m bot.scrapers.hn_whoishiring --out var/run/hn_digest_YYYY-MM-DD.json
 ```
-Скрипт сам знаходить поточну гілку, бере лише нові коментарі верхнього рівня й веде стан `var/state/hn_seen.json` (не редагувати). Код виходу 2 означає, що API не відповів: файл містить `[]`, ран іде далі, у нотатці рану це проблема рану.
+The script finds the current thread itself, takes only new top-level comments and keeps its state in `var/state/hn_seen.json` (do not edit). Exit code 2 means the API did not respond: the file contains `[]`, the run continues, and in the run note this is a run problem.
 {% else %}
-Пропустити: `search.yaml → sources.hn_whoishiring.enabled` вимкнено.
+Skip: `search.yaml → sources.hn_whoishiring.enabled` is off.
 {% endif %}
-## Step 2: Email-алерти порталів ({{ ns.senders|join(', ') if alerts_on else 'не налаштовані' }})
+## Step 2: Portal email alerts ({{ ns.senders|join(', ') if alerts_on else 'not configured' }})
 {% if alerts_on %}
-1. Скринька `gmail` ({{ gmail.jobs.address }}): `mcp__gmail__search_emails` з запитом
-   `label:job-alerts {{ alert_from }} newer_than:2d`, потім `mcp__gmail__read_email` для кожного листа. Листи лише читати: не видаляти, не архівувати, мітки не міняти.
-2. З тексту листів витягти прямі лінки на сторінки проєктів чи вакансій (сторінка одного проєкту, не список і не сторінка входу). Трекінгові параметри (`utm_*` тощо) відкинути, дублікати прибрати.
-3. Записати у `var/run/urls_alerts_YYYY-MM-DD.txt` (один URL на рядок) і запустити discover:
+1. Mailbox `gmail` ({{ gmail.jobs.address }}): `mcp__gmail__search_emails` with the query
+   `label:job-alerts {{ alert_from }} newer_than:2d`, then `mcp__gmail__read_email` for each email. Only read the emails: do not delete, do not archive, do not change labels.
+2. From the email text extract direct links to project or job pages (the page of a single project, not a list and not a login page). Drop tracking parameters (`utm_*` etc.), remove duplicates.
+3. Write them to `var/run/urls_alerts_YYYY-MM-DD.txt` (one URL per line) and run discover:
 
 ```bash
 js -m bot.generators.discover --skip-seen var/run/urls_alerts_YYYY-MM-DD.txt
 ```
-`--skip-seen` пропускає лінки з попередніх вечорів (стан `var/state/discover_seen.json`, не редагувати): алерт-листи читаються за два дні, без цього кожен проєкт ішов би в дайджест двічі. Скільки пропущено, скрипт пише в stderr («вже бачені: N»), цю цифру дати у статистиці нотатки рану. Digest пишеться поруч: `var/run/discover_digest_YYYY-MM-DD.json` (лише live; `[]`, якщо нових лінків не було). Лінки, які не скрапнулись, лягають у `var/run/discover_manual_YYYY-MM-DD.json`: їх дати в нотатці рану окремим списком «manual» з прямим URL.
+`--skip-seen` skips links from previous evenings (state `var/state/discover_seen.json`, do not edit): alert emails are read over two days, and without it every project would land in the digest twice. The script prints to stderr how many were skipped («вже бачені: N»); give that number in the statistics of the run note. The digest is written next to it: `var/run/discover_digest_YYYY-MM-DD.json` (live only; `[]` if there were no new links). Links that could not be scraped go to `var/run/discover_manual_YYYY-MM-DD.json`: list them in the run note as a separate "manual" list with the direct URL.
 
-Якщо листів не знайшлося (0 результатів), discover не запускати й записати це в нотатку рану: можливо, мітка `job-alerts` чи алерти на порталах ще не налаштовані.
+If no emails were found (0 results), do not run discover and record this in the run note: the `job-alerts` label or the alerts on the portals may not be set up yet.
 {% else %}
-Пропустити: жодне email-джерело в `search.yaml → sources` не має `enabled: true` разом із `sender`{% if ns.unconfigured %} (без `sender`: {{ ns.unconfigured|join(', ') }}){% endif %}.
+Skip: no email source in `search.yaml → sources` has `enabled: true` together with `sender`{% if ns.unconfigured %} (without `sender`: {{ ns.unconfigured|join(', ') }}){% endif %}.
 {% endif %}
-## Step 3: Злиття й фільтри (Python — НЕ вручну)
+## Step 3: Merge and filters (Python, NOT by hand)
 
-Обидва дайджести злити в один JSON-список (відсутній файл = порожній список):
+Merge both digests into one JSON list (a missing file = an empty list):
 
 ```bash
 python3 - var/run/merged_YYYY-MM-DD.json var/run/hn_digest_YYYY-MM-DD.json var/run/discover_digest_YYYY-MM-DD.json <<'EOF'
@@ -90,62 +90,62 @@ print(f"merged: {len(rows)}")
 EOF
 js -m bot.filters.rules var/run/merged_YYYY-MM-DD.json -o var/run/filtered_YYYY-MM-DD.json
 ```
-Фільтр сам ставить теги `engagement`, `remote_scope`, `stated_rate`, канал `apply_channel` і виключає з названою причиною (`reason`). Не перевизначати рішення фільтра. Єдиний виняток: якщо у selected явне сміття (нерелевантна галузь при формально високому скорі), прибрати його з `filtered_YYYY-MM-DD.json` (selected) до Step 4 і зазначити в нотатці рану з причиною.
+The filter itself sets the tags `engagement`, `remote_scope`, `stated_rate`, the `apply_channel` channel, and excludes with a named reason (`reason`). Do not override the filter's decisions. The only exception: if there is obvious junk among selected (an irrelevant industry with a formally high score), remove it from `filtered_YYYY-MM-DD.json` (selected) before Step 4 and note it in the run note with the reason.
 
-Якщо `merged: 0`, Step 4 і Step 5 пропустити, нотатку рану однаково написати (з нулями й причиною).
+If `merged: 0`, skip Step 4 and Step 5, but still write the run note (with zeros and the reason).
 
 ## Step 4: Cover notes
 
 ```bash
 js -m bot.generators.cover_note --lang-only var/run/filtered_YYYY-MM-DD.json
 ```
-Друкує `{slug: мова}` для кожного selected (`en` або `de`; агентство зі списку `agencies_de` завжди `de`). Для кожного slug написати **тіло** листа цією мовою, 120–180 слів:
-- конкретно під цей проєкт: що з опису збігається з досвідом кандидата (`candidate_brief.md`, трек `category`), одним-двома фактами, без вигаданих деталей;
-- без привітання, підпису й ставки: рушій сам додає звертання, речення про ставку (політика `{{ rate.get('quote_policy', 'target') }}`) і підпис. Числа ставки в тіло не писати ніколи;
-- без канцеляриту й без DIN-формату: ні «Sehr geehrte Damen und Herren», ні блоку «Anlagen»;
-- без тире як сполучника (`—`, `–`): замість них кома або крапка.
+Prints `{slug: language}` for each selected lead (`en` or `de`; an agency from the `agencies_de` list is always `de`). For each slug write the **body** of the letter in that language, 120–180 words:
+- specific to this project: what in the description matches the candidate's experience (`candidate_brief.md`, track `category`), with one or two facts, without invented details;
+- without greeting, signature or rate: the engine itself adds the salutation, the rate sentence (policy `{{ rate.get('quote_policy', 'target') }}`) and the signature. Never write rate numbers into the body;
+- no officialese and no DIN format: no "Sehr geehrte Damen und Herren", no "Anlagen" block;
+- no dashes as connectors (`—`, `–`): a comma or a period instead.
 
-Якщо мова від рушія здається хибною, тіло однаково писати нею, а сумнів зазначити в нотатці рану біля ліда.
+If the language from the engine seems wrong, still write the body in that language and note the doubt in the run note next to the lead.
 
-Тіла зібрати у `var/run/bodies_YYYY-MM-DD.json` як `{slug: тіло}` і зібрати нотатки:
+Collect the bodies in `var/run/bodies_YYYY-MM-DD.json` as `{slug: body}` and assemble the notes:
 
 ```bash
 js -m bot.generators.cover_note --assemble var/run/filtered_YYYY-MM-DD.json var/run/bodies_YYYY-MM-DD.json
 ```
-Пише `var/run/notes_YYYY-MM-DD/<slug>.txt` (перший рядок — тема) і друкує шляхи. Готові нотатки руками не правити: якщо щось не так, виправити тіло й перезапустити `--assemble`.
+Writes `var/run/notes_YYYY-MM-DD/<slug>.txt` (the first line is the subject) and prints the paths. Do not edit the finished notes by hand: if something is off, fix the body and rerun `--assemble`.
 
-## Step 4b: Відповіді на подачі (лише звіт)
+## Step 4b: Replies to applications (report only)
 
-Ранку в контрактного ринку нема, тож відповіді платформ, ATS і рекрутерів на вже подані заявки видно лише тут.
+The contract market has no morning run, so replies from platforms, ATS and recruiters to already submitted applications are seen only here.
 
 ```bash
 js scripts/employer_scan.py --days 2 --json > var/run/replies_YYYY-MM-DD.json
 ```
-Код виходу 2 — не збій: серед листів є незакрита співбесіда чи запит (`summary.action_needed`). Будь-який інший ненульовий код означає, що скан упав (типово протух OAuth): це проблема рану для нотатки, ран іде далі.
+Exit code 2 is not a failure: among the emails there is an open interview or request (`summary.action_needed`). Any other non-zero code means the scan crashed (typically an expired OAuth): that is a run problem for the note, the run continues.
 
-Скан шукає за доменами ATS, доменами й адресами з трекера та пакетів заявок, і прочісує інбокс jobs (без алертів): з прочісування лишається лише лист із розпізнаним класом, зіставлений з компанією трекера. З `items` взяти для звіту: дату, відправника, тему, клас (`classification`: rejected, interview, confirmed, info_request, unknown), компанію з трекера (`company`, інакше «?») і чи вже є наша відповідь у треді (`answered`).
+The scan searches by ATS domains, by the domains and addresses from the tracker and the application packages, and sweeps the jobs inbox (without alerts): from the sweep only an email with a recognised class, matched to a tracker company, is kept. From `items` take for the report: date, sender, subject, class (`classification`: rejected, interview, confirmed, info_request, unknown), the company from the tracker (`company`, otherwise "?") and whether our reply is already in the thread (`answered`).
 
-**Тільки звіт.** Трекер не правити, листам не відповідати, нічого не видаляти, мітки не міняти. Статус у трекері оновлює оператор.
+**Report only.** Do not edit the tracker, do not reply to emails, do not delete anything, do not change labels. The operator updates the status in the tracker.
 
-## Step 5: Черга подач
+## Step 5: Application queue
 
 ```bash
 js scripts/enqueue_leads.py --date YYYY-MM-DD
 ```
-Скрипт сам визначає канал кожного відібраного ліда (email, форма ATS без логіну, Easy Apply, платформа з логіном), складає пакет `var/run/packages_YYYY-MM-DD/<slug>/` з нотаткою й вкладеннями, ганяє перевірки перед відправкою й ставить лід у `var/state/queue.jsonl` як `queued` або `held` (з причинами). Друкує один JSON-рядок: `packages`, `queued` (по каналах), `held` (slug і причини), `skipped`. Нічого не шле й не подає: email-ліди шле диспетчер за своїм розкладом і лімітами, ліди форм подає браузерний воркер `scripts/apply_leads.py` вдень; платформи з логіном і Easy Apply чекають наступного етапу. Цей JSON-рядок переписати в нотатку рану і в маркер (Step 6). Код виходу 2 означає, що `filtered_YYYY-MM-DD.json` нема: це проблема рану.
+The script itself determines the channel of each selected lead (email, ATS form without login, Easy Apply, platform with login), builds the package `var/run/packages_YYYY-MM-DD/<slug>/` with the note and attachments, runs the pre-send checks and puts the lead into `var/state/queue.jsonl` as `queued` or `held` (with reasons). It prints one JSON line: `packages`, `queued` (per channel), `held` (slug and reasons), `skipped`. It sends and submits nothing: email leads are sent by the dispatcher on its own schedule and within its limits, form leads are submitted by the browser worker `scripts/apply_leads.py` during the day; platforms with login and Easy Apply wait for the next stage. Copy this JSON line into the run note and into the marker (Step 6). Exit code 2 means `filtered_YYYY-MM-DD.json` is missing: that is a run problem.
 
-## Step 5b: Нотатка рану
+## Step 5b: Run note
 
-Листів нікому не слати. Записати у файл `var/run/operator_evening_YYYY-MM-DD.html` короткий HTML-фрагмент {{ mail_lang }} (інлайн-CSS, без зовнішньої рамки й хедера):
-- один рядок з числами: перевірено / відібрано / відсіяно / у черзі / held;
-- список відібраного: компанія, роль, джерело (`source`; де поля нема, за доменом `source_url`: HN або портал алерту), канал з черги, і для held причини;
-- **Excluded** згорнуто групами за причиною, дрібним сірим шрифтом: кількість і «компанія — роль». Причина = текст `reason` після останньої `:`, тож `excluded_description:onsite_only` і `onsite_only` йдуть в одну групу. Причини, які ставить фільтр: `closed`, `employee_only`, `unpaid`, `onsite_only`, `us_work_authorization`, `us_only`, `rate_below_min`, `outside_region` (також remote лише з іншої країни), `language_mismatch:<мова>`, `score_below_N` (N = мінімальний скор), `excluded_title`, `excluded_category`, `duplicate_in_tracker`, `duplicate_in_run`, `scrape_failed_title`;
-- **Manual**: лінки з `discover_manual_YYYY-MM-DD.json`, якщо є;
-- відповіді на подачі з Step 4b, крім класу `unknown`: компанія, клас, тема; незакриті співбесіди й запити першими й червоним блоком `border-left:4px solid #cf222e;background:#ffebe9`;
-- проблеми цього рану (HN не відповів, алертів нема, discover упав, enqueue впав), якщо були, жовтим блоком `border-left:4px solid #d4a72c;background:#fff8c5`.
-Порожні секції не рендерити. Нотатки cover note сюди не копіювати, вони в пакетах.
+Do not send email to anyone. Write a short HTML fragment {{ mail_lang }} (inline CSS, no outer frame and no header) to the file `var/run/operator_evening_YYYY-MM-DD.html`:
+- one line with the numbers: checked / selected / excluded / queued / held;
+- the list of selected leads: company, role, source (`source`; where the field is missing, by the `source_url` domain: HN or the alert portal), the channel from the queue, and for held the reasons;
+- **Excluded** collapsed into groups by reason, in small grey font: the count and «company — role». The reason = the `reason` text after the last `:`, so `excluded_description:onsite_only` and `onsite_only` go into one group. Reasons set by the filter: `closed`, `employee_only`, `unpaid`, `onsite_only`, `us_work_authorization`, `us_only`, `rate_below_min`, `outside_region` (also remote only from another country), `language_mismatch:<language>`, `score_below_N` (N = the minimum score), `excluded_title`, `excluded_category`, `duplicate_in_tracker`, `duplicate_in_run`, `scrape_failed_title`;
+- **Manual**: the links from `discover_manual_YYYY-MM-DD.json`, if any;
+- replies to applications from Step 4b, except class `unknown`: company, class, subject; open interviews and requests first and in a red block `border-left:4px solid #cf222e;background:#ffebe9`;
+- problems of this run (HN did not respond, no alerts, discover crashed, enqueue crashed), if any, in a yellow block `border-left:4px solid #d4a72c;background:#fff8c5`.
+Do not render empty sections. Do not copy the cover notes here; they are in the packages.
 
-## Step 6: Завершення
+## Step 6: Finish
 
-Перевірити перед маркером: агент сам нічого не надіслав і не подав (подачі роблять лише диспетчер `scripts/dispatch_leads.py` і браузерний воркер `scripts/apply_leads.py`), жодної чернетки в Gmail не створено, жодного листа не видалено, трекер не змінено. `git add var/ -f` НЕ робити (var/ gitignored).
-Останній рядок stdout: `EVENING OK: selected=N excluded=M notes=K queued=Q held=H replies=R` (Q = сума `queued` по каналах зі Step 5, H = довжина `held`).
+Check before the marker: the agent itself has sent nothing and submitted nothing (submissions are made only by the dispatcher `scripts/dispatch_leads.py` and the browser worker `scripts/apply_leads.py`), no draft was created in Gmail, no email was deleted, the tracker was not changed. Do NOT do `git add var/ -f` (var/ is gitignored).
+Last line of stdout: `EVENING OK: selected=N excluded=M notes=K queued=Q held=H replies=R` (Q = the sum of `queued` across channels from Step 5, H = the length of `held`).

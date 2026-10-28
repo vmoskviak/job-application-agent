@@ -1,4 +1,4 @@
-# Контакти й поля форм. Вигадана кандидатка: приклад і тестова фікстура.
+# Contacts and form fields. Fictional candidate: example and test fixture.
 slug: erika
 status: active          # active | paused | placed
 first_name: Erika
@@ -16,7 +16,7 @@ nationality: Deutsch
 availability: ab sofort
 birth_date: '1990-01-15'
 default_salary: '48000'
-# додаткові рядки в шапці CV після міста й телефону/пошти
+# extra lines in the CV header after city and phone/email
 cv_contact_extra:
 - linkedin.com/in/erika-mustermann-example
 links:
@@ -26,7 +26,7 @@ rate: {hourly_target: 95, currency_default: EUR}
 form_answers:
 - {pattern: 'sponsorship', answer: 'No', choice: 'no'}
 - {pattern: 'previously worked', answer: 'No', choice: 'no'}
-experience_years:   # роки досвіду для числових питань; перший збіг шаблону виграє, total для загального
+experience_years:   # years of experience for numeric questions; first pattern match wins, total for the overall figure
 - {pattern: 'android|kotlin', years: 12}
 - {pattern: 'compose', years: 4}
 - {pattern: 'total', years: 12}

@@ -88,6 +88,11 @@ def _office_outside_eu(lead: dict) -> bool:
     return bool(countries) and all(c is not None and c not in EU_EEA_CH for c in countries)
 
 
+# Рядок «пакет готовий, не подано» від --batch-render (ринок найму): 🔄 вручну, 🌐 портал,
+# 📧 лист ще не пішов, а також ready/manual, які пише агент.
+READY_STATUS_RE = re.compile(r"^\W*(?:🔄|🌐 Portal|📧 Пакет готовий|ready\b|manual\b)", re.IGNORECASE)
+
+
 def _duplicate_in_tracker(pkg: Package, tracker_path: Path) -> bool:
     """Рядок трекера про ту саму подачу. platform_login: лише рядок, у чиїх нотатках є
     apply_url пакета, бо одна агентура на платформі веде багато схожих проєктів.
@@ -104,6 +109,8 @@ def _duplicate_in_tracker(pkg: Package, tracker_path: Path) -> bool:
     company = normalize_company(pkg.lead.get("company") or "")
     title = pkg.lead.get("title") or ""
     for row in rows:
+        if READY_STATUS_RE.match(row.get("status") or ""):
+            continue  # пакет зрендерено, але не подано: саме його ставимо в чергу (ринок найму)
         if normalize_company(row.get("company") or "") == company and same_role(title, row.get("title") or ""):
             return True
     return False
@@ -121,7 +128,8 @@ def check_package(pkg: Package, *, tracker_path: Path, expected_lang: str, forbi
     platform = platform_of(pkg.channel, pkg.apply_url)
     if platforms is not None and platform and platforms.get(platform, "off") == "off":
         reasons.append(f"platform_off:{platform}")
-    if _eng.detect_lang(pkg.note or "") != expected_lang:   # мова самого тексту, не meta
+    # мова самого тексту, не meta; порожня нотатка (форма без Anschreiben-поля) мови не має
+    if (pkg.note or "").strip() and _eng.detect_lang(pkg.note) != expected_lang:
         reasons.append("language_mismatch")
     if is_agency or pkg.channel in FORBIDDEN_CHANNELS:
         for name in forbidden_names:

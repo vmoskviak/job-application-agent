@@ -62,6 +62,7 @@ class FakeDriver:
         self.opened = 0
         self.closed = 0
         self.probes = 0
+        self.closed_after_probes: int | None = None
 
     def open(self, url):
         self.opened += 1
@@ -85,6 +86,9 @@ class FakeDriver:
         i = self.probes
         self.probes += 1
         return self.probe_after_polls.get(i, "")
+
+    def is_closed(self, page):
+        return self.closed_after_probes is not None and self.probes >= self.closed_after_probes
 
     def close(self, page):
         self.closed += 1
@@ -1123,3 +1127,53 @@ def test_no_gap_when_driver_failed_before_page_opened(penv):
     env.driver.open = open_
     res = env.run()
     assert res.failed == ["a"] and res.sent == ["b"] and env.slept_total == 0
+
+
+# --- ринок найму: рядок «готово» стає подачею, hand-off без кнопок ---
+
+READY_TRACKER = """# Tracker
+
+| # | Date | Company | Position | Source | Salary range | Status | Last update | Next action | Notes |
+|---|---|---|---|---|---|---|---|---|---|
+| 2026-10-27 | Senior Android Engineer | Contract Co, Köln | 🔄 Файли готові — подати вручну · https://x.example/j/1 |
+"""
+
+
+def test_employment_submit_updates_ready_row_and_writes_result(env):
+    env.cfg.market = "de_employment"
+    env.tracker.write_text(READY_TRACKER, encoding="utf-8")
+    env.driver.script[URL] = ApplyResult("submitted", "ats", URL, ["s.png"], confirmation_text="Vielen Dank")
+    run_apply(**env.kw)
+    text = env.tracker.read_text(encoding="utf-8")
+    assert "🔄" not in text and "portal_submitted (портал) (2026-10-27)" in text and "https://x.example/j/1" in text
+    assert text.count("Contract Co") == 1   # без другого рядка
+    assert json.loads((env.pkg(LID) / "apply_result.json").read_text(encoding="utf-8"))["status"] == "submitted"
+
+
+def test_employment_submit_without_ready_row_appends(env):
+    env.cfg.market = "de_employment"
+    env.driver.script[URL] = ApplyResult("submitted", "ats", URL, [], confirmation_text="Danke")
+    run_apply(**env.kw)
+    assert "| 1 |" in env.tracker.read_text(encoding="utf-8")
+
+
+def test_handoff_without_buttons_ends_when_tab_closed(env):
+    env.cfg.handoff_buttons = False
+    env.driver.script[URL] = ApplyResult("handoff", "ats", URL, [], reason="captcha")
+    env.driver.closed_after_probes = 2
+    res = run_apply(**env.kw)
+    assert "captcha" in env.transport.sent[0].text and not env.transport.sent[0].buttons
+    assert res.handoff == [LID]
+    rec = env.store.get(LID)
+    assert rec["status"] == "held" and rec["reasons"] == ["operator_skipped"]
+    assert next(c for c in env.cards.read() if c["kind"] == "handoff")["status"] == "skipped"
+
+
+def test_handoff_without_buttons_confirmed_by_page(env):
+    env.cfg.handoff_buttons = False
+    env.cfg.market = "de_employment"
+    env.tracker.write_text(READY_TRACKER, encoding="utf-8")
+    env.driver.script[URL] = ApplyResult("handoff", "ats", URL, [], reason="open_required: Anrede")
+    env.driver.probe_after_polls[1] = "Vielen Dank für Ihre Bewerbung"
+    res = run_apply(**env.kw)
+    assert res.sent == [LID] and "portal_submitted (портал)" in env.tracker.read_text(encoding="utf-8")

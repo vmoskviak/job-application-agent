@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
-"""Після рану агента: нові співбесіди, оферти й запити з трекера → оператору в Telegram.
+"""After an agent run: new interviews, offers and requests from the tracker go to the operator in Telegram.
 
-    notify_run.py --base <sha до рану> --run morning|evening
+    notify_run.py --base <sha before the run> --run morning|evening
 
-Порівнює tracker.md до рану (git show <sha>:tracker.md) з поточним і шле один текст
-про рядки, що стали actionable. Без Telegram у клієнта нічого не робить: тоді
-оператор читає зведений лист. 28.10.2026 ранковий ран о 03:11 записав співбесіду
-на 17:30 того ж дня, а оператор дізнався б о 20:40 зі зведення.
+Compares tracker.md before the run (git show <sha>:tracker.md) with the current one and
+sends a single text about the rows that became actionable. Does nothing when the client
+has no Telegram: the operator then reads the summary mail. On 28.10.2026 the morning run
+at 03:11 recorded an interview at 17:30 the same day, and the operator would only have
+learned of it at 20:40 from the summary.
 """
 from __future__ import annotations
 
@@ -37,17 +38,17 @@ def rows_at(root: Path, sha: str) -> list:
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--base", required=True, help="коміт даних до рану")
+    ap.add_argument("--base", required=True, help="data commit before the run")
     ap.add_argument("--run", required=True, choices=("morning", "evening"))
     args = ap.parse_args(argv)
     c = _client.active()
     if not _notify.configured(c):
-        print("[notify] telegram не налаштовано, пропускаю")
+        print("[notify] telegram not configured, skipping")
         return 0
     text = _notify.run_changes_text(rows_at(c.root, args.base), rep.parse_rows(c.tracker),
                                     args.run, c.telegram["lang"])
     if text is None:
-        print("[notify] нових співбесід чи запитів нема")
+        print("[notify] no new interviews or requests")
         return 0
     _notify.notify(c, text)
     print(f"[notify] telegram: {text.splitlines()[0]}")

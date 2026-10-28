@@ -1,35 +1,35 @@
 #!/bin/bash
-# Headless-запуск агента для одного клієнта.
-# Використання: run_agent.sh <slug> evening|morning
-# Env: APPLY_MODE=dry-run — trial-режим для morning (читає агент-промпт).
-#      JOBSEARCH_RUN_NOTE="..." — разова вказівка оператора агенту.
+# Headless agent run for one client.
+# Usage: run_agent.sh <slug> evening|morning
+# Env: APPLY_MODE=dry-run: trial mode for morning (the agent prompt reads it).
+#      JOBSEARCH_RUN_NOTE="...": a one-off operator instruction to the agent.
 #
-# Конфіг машини — /root/.claude-env (поза git):
-#   CLAUDE_CODE_OAUTH_TOKEN     токен з `claude setup-token`
-#   JOBSEARCH_CLIENTS_DIR       каталог clients/ у клоні репозиторію даних
-#   JOBSEARCH_OPERATOR_EMAIL    кому йдуть звіти й запрошення на співбесіди
-#   JOBSEARCH_ALERT_TO          кому йдуть алерти про збої
-#   JOBSEARCH_OPERATOR_MAIL     evening (дефолт): оператору один зведений лист після
-#                               вечірнього рану, вночі нічого; always: лист після кожного рану
-#   PERPLEXITY_API_KEY, FIRECRAWL_API_KEY, CLAUDE_MODEL (опційно)
+# Machine config is /root/.claude-env (outside git):
+#   CLAUDE_CODE_OAUTH_TOKEN     token from `claude setup-token`
+#   JOBSEARCH_CLIENTS_DIR       the clients/ directory in the data repo clone
+#   JOBSEARCH_OPERATOR_EMAIL    who gets reports and interview invitations
+#   JOBSEARCH_ALERT_TO          who gets failure alerts
+#   JOBSEARCH_OPERATOR_MAIL     evening (default): one summary mail to the operator after
+#                               the evening run, nothing at night; always: mail after every run
+#   PERPLEXITY_API_KEY, FIRECRAWL_API_KEY, CLAUDE_MODEL (optional)
 set -uo pipefail
 
 SLUG="${1:?usage: run_agent.sh <slug> evening|morning}"
 MODE="${2:?usage: run_agent.sh <slug> evening|morning}"
 ENGINE="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
-# Headless auth і конфіг машини
+# Headless auth and machine config
 [ -f "${JOBSEARCH_ENV_FILE:-/root/.claude-env}" ] && set -a && source "${JOBSEARCH_ENV_FILE:-/root/.claude-env}" && set +a
 
-# LXC працює під root; без цього claude відмовляє у --dangerously-skip-permissions
+# LXC runs as root; without this claude refuses --dangerously-skip-permissions
 export IS_SANDBOX=1
 export JOBSEARCH_CLIENT="$SLUG"
 export JOBSEARCH_ENGINE="$ENGINE"
 export JOBSEARCH_CLIENTS_DIR="${JOBSEARCH_CLIENTS_DIR:-$ENGINE/../jobsearch-clients/clients}"
 export PATH="$ENGINE/bin:$PATH"
-# discover і портальні подачі тривають довше за стандартні 10 хв Bash-інструмента.
-# Без цього агент відправляє їх у фон і завершує хід, а headless-процес на
-# цьому виходить: команда гине, ран лишається без результату.
+# discover and portal applications take longer than the Bash tool's default 10 min.
+# Without this the agent sends them to the background and ends its turn, and the
+# headless process exits at that point: the command dies, the run has no result.
 export BASH_DEFAULT_TIMEOUT_MS="${BASH_DEFAULT_TIMEOUT_MS:-1800000}"
 export BASH_MAX_TIMEOUT_MS="${BASH_MAX_TIMEOUT_MS:-3600000}"
 
@@ -41,7 +41,7 @@ LOCK_DIR="${JOBSEARCH_LOCK_DIR:-/var/lock}"
 LOG="$LOG_DIR/${MODE}_${DATE}.log"
 
 if [ ! -d "$ROOT" ]; then
-  echo "[$(date)] клієнта '$SLUG' не знайдено: $ROOT" >&2
+  echo "[$(date)] client '$SLUG' not found: $ROOT" >&2
   exit 1
 fi
 mkdir -p "$LOG_DIR" "$ROOT/var/run"
@@ -49,89 +49,89 @@ mkdir -p "$LOG_DIR" "$ROOT/var/run"
 export JOBSEARCH_OPERATOR_MAIL="${JOBSEARCH_OPERATOR_MAIL:-evening}"
 
 alert() {  # alert <message> [log-tail]
-  # evening: алерт стає в чергу й іде у вечірньому зведеному листі, вночі пошта мовчить
+  # evening: the alert is queued and goes out in the evening summary mail, mail stays silent at night
   local queue=""
   [ "$JOBSEARCH_OPERATOR_MAIL" = "evening" ] && queue="--queue"
   "$PY" "$ENGINE/scripts/server/send_alert.py" --run "$MODE" --message "$1" \
     ${2:+--log-tail "$2"} $queue || true
 }
 
-operator_summary() {  # один лист оператору на добу; після якого рану, вирішує report_mode клієнта
+operator_summary() {  # one mail to the operator per day; the client's report_mode decides after which run
   [ "$JOBSEARCH_OPERATOR_MAIL" = "evening" ] || return 0
   "$PY" "$ENGINE/scripts/server/operator_summary.py" --send --run "$MODE" >> "$LOG" 2>&1 \
-    || echo "[$(date)] operator_summary не надіслано" >> "$LOG"
+    || echo "[$(date)] operator_summary not sent" >> "$LOG"
 }
 
-# Один спільний лок на всю машину: запуски різних клієнтів і ручні сесії
-# ніколи не перетинаються (спільний ліміт підписки, один дисплей). Лок чекаємо
-# до JOBSEARCH_LOCK_WAIT с (15 хв): короткий LLM-джоб inbox watcher-а тримає
-# той самий лок, і з -n нічний ран мовчки пропускався б.
+# One shared lock for the whole machine: runs of different clients and manual
+# sessions never overlap (shared subscription limit, one display). We wait for the
+# lock up to JOBSEARCH_LOCK_WAIT s (15 min): the inbox watcher's short LLM job holds
+# the same lock, and with -n the night run would be skipped silently.
 if [ -z "${JOBSEARCH_LOCK_HELD:-}" ]; then
   exec 9>"$LOCK_DIR/jobsearch-agent.lock"
   if ! flock -w "${JOBSEARCH_LOCK_WAIT:-900}" 9; then
-    echo "[$(date)] $SLUG $MODE: інший запуск тримає лок довше за ${JOBSEARCH_LOCK_WAIT:-900} с — виходжу" >> "$LOG"
+    echo "[$(date)] $SLUG $MODE: another run has held the lock longer than ${JOBSEARCH_LOCK_WAIT:-900} s, exiting" >> "$LOG"
     exit 0
   fi
 fi
 
-# Фікси деплояться самі: лок уже наш. --ff-only: локальні незакомічені
-# зміни/дивергенція = не тягнемо, ран іде на тому, що є, і це видно в лозі.
+# Fixes deploy themselves: the lock is already ours. --ff-only: local uncommitted
+# changes/divergence = no pull, the run goes on what is there, and the log shows it.
 if [ -z "${JOBSEARCH_LOCK_HELD:-}" ]; then
   ENGINE_BEFORE="$(git -C "$ENGINE" rev-parse HEAD 2>/dev/null || true)"
   git -C "$ENGINE" pull --ff-only >> "$LOG" 2>&1 || {
-    echo "[$(date)] $MODE: git pull рушія failed — ран на локальному стані" >> "$LOG"
+    echo "[$(date)] $MODE: engine git pull failed, run on local state" >> "$LOG"
     alert "Engine-Pull fehlgeschlagen (git pull --ff-only), Lauf auf lokalem Stand" \
       "$(git -C "$ENGINE" status --short 2>&1 | head -20; tail -c 1500 "$LOG")"
   }
   if [ "$ENGINE_BEFORE" != "$(git -C "$ENGINE" rev-parse HEAD 2>/dev/null || true)" ]; then
-    # Цей скрипт щойно змінився на диску, а bash читає його по ходу виконання.
-    # Стартуємо заново з нової версії; лок (fd 9) успадковується.
-    echo "[$(date)] $MODE: рушій оновлено — перезапуск обгортки" >> "$LOG"
+    # This script just changed on disk, and bash reads it as it runs.
+    # Restart from the new version; the lock (fd 9) is inherited.
+    echo "[$(date)] $MODE: engine updated, restarting the wrapper" >> "$LOG"
     JOBSEARCH_LOCK_HELD=1 exec "$0" "$@"
   fi
 fi
-# Збій pull даних (22.10.2026: той самий файл створено на сервері й на Mac) раніше
-# лишав лише рядок у лозі, і всі рани дня йшли на застарілих трекерах. Тепер: недо-
-# ребейз відкочується, ран іде на локальному стані, оператор отримує алерт зі
-# списком файлів, що заважають.
+# A failed data pull (22.10.2026: the same file created on the server and on the Mac)
+# used to leave only a log line, and all runs of the day went on stale trackers. Now:
+# the half-done rebase is aborted, the run goes on local state, the operator gets an
+# alert with the list of files in the way.
 git -C "$ROOT" pull --rebase >> "$LOG" 2>&1 || {
   git -C "$ROOT" rebase --abort >/dev/null 2>&1
-  echo "[$(date)] $MODE: git pull даних failed — ран на локальному стані" >> "$LOG"
+  echo "[$(date)] $MODE: data git pull failed, run on local state" >> "$LOG"
   alert "Datenpull fehlgeschlagen (git pull --rebase), Lauf auf lokalem Stand" \
     "$(git -C "$ROOT" status --short 2>&1 | head -20; tail -c 1500 "$LOG")"
 }
 
-# Ринок без цього режиму (контракт поки лише evening): один рядок у лог, без
-# алерту й без зведеного листа. Інакше кожен нічний cron давав би хибний збій.
+# Market without this mode (contract is evening-only for now): one log line, no
+# alert and no summary mail. Otherwise every night cron would report a false failure.
 "$PY" "$ENGINE/scripts/render_run.py" "$MODE" --check 2>> "$LOG"
 if [ $? -eq 3 ]; then
-  echo "[$(date)] $SLUG $MODE: ринок клієнта не має цього режиму — пропускаю" >> "$LOG"
+  echo "[$(date)] $SLUG $MODE: the client's market has no such mode, skipping" >> "$LOG"
   exit 0
 fi
 
 PROMPT="$("$PY" "$ENGINE/scripts/render_run.py" "$MODE" --headless 2>> "$LOG")"
 if [ -z "$PROMPT" ] || [ ! -f "$PROMPT" ]; then
-  echo "[$(date)] $MODE: не вдалося зрендерити промпт" >> "$LOG"
+  echo "[$(date)] $MODE: failed to render the prompt" >> "$LOG"
   alert "Prompt konnte nicht gerendert werden" "$(tail -c 2000 "$LOG")"
   operator_summary
   exit 1
 fi
 
 cd "$ROOT"
-# HEAD до рану — щоб потім перевірити лише Msg-ID, які агент додав у трекер
+# HEAD before the run, so that later only the Msg-IDs the agent added to the tracker are checked
 BEFORE_SHA="$(git rev-parse HEAD 2>/dev/null || true)"
 echo "==== [$(date)] $SLUG $MODE run start (APPLY_MODE=${APPLY_MODE:-live}, model=${CLAUDE_MODEL:-opus}) ====" >> "$LOG"
 
 set +e
-# Модель: Opus за замовчуванням (менше галюцинує статуси/Msg-ID).
-# Override: CLAUDE_MODEL=... у файлі оточення.
-# JOBSEARCH_RUN_NOTE: разова вказівка оператора до цього запуску (репетиція,
-# звужений обсяг). Дописується в кінець промпта.
+# Model: Opus by default (hallucinates statuses/Msg-IDs less).
+# Override: CLAUDE_MODEL=... in the environment file.
+# JOBSEARCH_RUN_NOTE: a one-off operator instruction for this run (rehearsal,
+# narrowed scope). Appended to the end of the prompt.
 PROMPT_TEXT="$(cat "$PROMPT")"
 if [ -n "${JOBSEARCH_RUN_NOTE:-}" ]; then
   PROMPT_TEXT="$PROMPT_TEXT
 
-## Примітка оператора до цього запуску (прямий запит, має пріоритет)
+## Operator note for this run (direct request, takes priority)
 
 $JOBSEARCH_RUN_NOTE"
   echo "[$(date)] run note: $JOBSEARCH_RUN_NOTE" >> "$LOG"
@@ -143,12 +143,12 @@ timeout 3h claude -p "$PROMPT_TEXT" \
   --dangerously-skip-permissions \
   >> "$LOG" 2>&1
 EXIT_CODE=$?
-# set -e тут НЕ вмикати: перевірки нижче мають право впасти, а їхній код
-# читається явно. З -e перший же збій мовчки обривав скрипт до алертів.
+# Do NOT enable set -e here: the checks below are allowed to fail, and their exit
+# code is read explicitly. With -e the first failure silently cut the script off before the alerts.
 
 echo "==== [$(date)] $SLUG $MODE run end (exit $EXIT_CODE) ====" >> "$LOG"
 
-# Msg-ID валідатор: ловить сфабриковані Msg-ID, які агент міг вписати у трекер.
+# Msg-ID validator: catches fabricated Msg-IDs the agent may have written into the tracker.
 if [ -n "${BEFORE_SHA:-}" ]; then
   MSGID_OUT="$("$PY" "$ENGINE/scripts/validate_run_msgids.py" --base "$BEFORE_SHA" 2>&1)"
   MSGID_RC=$?
@@ -156,24 +156,24 @@ if [ -n "${BEFORE_SHA:-}" ]; then
   [ $MSGID_RC -ne 0 ] && alert "Erfundene oder fehlende Msg-IDs im Tracker, bitte prüfen und korrigieren" "$MSGID_OUT"
 fi
 
-# Нові співбесіди, оферти й запити з цього рану → оператору в Telegram одразу
-# (коли в клієнта налаштовано Telegram; інакше скрипт мовчить, лишається зведення).
+# New interviews, offers and requests from this run go to the operator in Telegram right away
+# (when the client has Telegram configured; otherwise the script is silent, the summary remains).
 if [ -n "${BEFORE_SHA:-}" ]; then
   "$PY" "$ENGINE/scripts/server/notify_run.py" --base "$BEFORE_SHA" --run "$MODE" >> "$LOG" 2>&1 \
-    || echo "[$(date)] notify_run не вдався" >> "$LOG"
+    || echo "[$(date)] notify_run failed" >> "$LOG"
 fi
 
-# Вартовий відповідей роботодавців: чи не лежить незакрита співбесіда/запит
-# документів, яку ран пропустив.
+# Employer reply watchdog: is there an unhandled interview / document request
+# that the run missed.
 EMP_OUT="$("$PY" "$ENGINE/scripts/employer_scan.py" --days 3 2>&1)"
 EMP_RC=$?
 echo "$EMP_OUT" >> "$LOG"
 [ $EMP_RC -eq 2 ] && alert "Offene Antwort eines Arbeitgebers (Einladung oder Rückfrage), heute beantworten" "$EMP_OUT"
-# Сам скан упав (типово: протух OAuth-токен скриньки) — пошту ніхто не
-# вартує, запрошення може пролежати непоміченим.
+# The scan itself failed (typically an expired mailbox OAuth token): nobody is
+# watching the mail, an invitation may sit unnoticed.
 [ $EMP_RC -ne 0 ] && [ $EMP_RC -ne 2 ] && alert "employer_scan fehlgeschlagen (exit $EMP_RC), OAuth der Postfächer prüfen" "$(echo "$EMP_OUT" | tail -c 1500)"
 
-# Успіх = exit 0 І маркер завершення в лозі
+# Success = exit 0 AND the completion marker in the log
 MARKER="$(echo "$MODE" | tr '[:lower:]' '[:upper:]') OK"
 if [ $EXIT_CODE -ne 0 ] || ! grep -q "$MARKER" "$LOG"; then
   TAIL="$(tail -c 3000 "$LOG")"

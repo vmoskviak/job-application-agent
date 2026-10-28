@@ -57,7 +57,9 @@ log = logging.getLogger(__name__)
 # Greenhouse інколи показує спершу опис вакансії, форма з'являється після «Apply».
 GH_APPLY_SELECTOR = 'a:has-text("Apply"), button:has-text("Apply")'
 # Невідомий ATS: перше видиме посилання чи кнопка на форму.
-APPLY_SELECTOR = 'a[href*="application"], a[href$="/apply"], a:has-text("Apply"), button:has-text("Apply")'
+APPLY_SELECTOR = ('a[href*="application"], a[href$="/apply"], a:has-text("Apply"), button:has-text("Apply"), '
+                  'a:has-text("Jetzt bewerben"), button:has-text("Jetzt bewerben"), a:has-text("Online bewerben"), '
+                  'a[href*="bewerb"], a:has-text("Bewerben"), button:has-text("Bewerben")')
 # Сторінка рендериться клієнтом: до першого читання чекаємо хоч якесь поле форми.
 FORM_READY_SELECTOR = "input[type=file], form, input, textarea, select"
 FORM_WAIT_MS = 15000

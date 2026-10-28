@@ -1,6 +1,6 @@
-# Фільтри контрактного клієнта: B2B, remote, без ролей лише для штатних і без US work auth.
+# Contract client filters: B2B, remote, no employee-only roles and no US work auth.
 min_score: 25
-max_submissions_per_run: 0       # авто-подачі нема: лише дайджест і чернетки
+max_submissions_per_run: 0       # no auto-submission: digest and drafts only
 cleanup_min_tracker_rows: 0
 excluded_title_patterns:
 - '\bjunior\b'
@@ -26,12 +26,12 @@ email_dead_companies: []
 region_label: Portugal (remote)
 remote_policy: any
 locations: [lisbon, portugal]
-# Етап 2a: follow-up поштою через N днів після подачі без відповіді
+# Phase 2a: email follow-up N days after a submission without a reply
 followup_days: 7
-# Етап 2a: назви, яких чернетки для агентур і платформ не називають (поточний роботодавець)
+# Phase 2a: names that drafts for agencies and platforms never mention (current employer)
 forbidden_names: [Example Corp]
-# Етап 2b: що додати німецьким агентурам поверх CV (attachments/)
+# Phase 2b: what to add for German agencies on top of the CV (attachments/)
 agency_attachments: [Project_List_DE.pdf]
-# Етап 2b: подачі без тапу (спека §2.2) і денні ліміти на канал (§6)
+# Phase 2b: submissions without a tap (spec §2.2) and daily limits per channel (§6)
 send_policy: auto
 daily_limits: {email: 5, form: 5}

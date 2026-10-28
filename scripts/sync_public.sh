@@ -13,8 +13,7 @@
 #   .superpowers/ docs/superpowers/        робочі плани й спеки з історією реальних клієнтів
 #   bot/apply/check24.py bot/apply/eismann.py  модулі під сайти конкретних роботодавців (реальні заявки)
 #   tests/test_apply_employer_portals.py   їхні тести (URL із тими самими хостами)
-#   README.md                              у публічній копії власний англомовний README
-# У цілі не чіпаються (protect): LICENSE, README.md, docs/README.uk.md, docs/index.md, docs/privacy.md.
+# У цілі не чіпаються (protect): LICENSE, docs/index.md, docs/privacy.md.
 set -euo pipefail
 
 ENGINE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -38,12 +37,11 @@ EXCLUDES=(
     --exclude=/.claude/ --exclude=/.superpowers/ --exclude=/docs/superpowers/
     --exclude=/bot/apply/check24.py --exclude=/bot/apply/eismann.py
     --exclude=/tests/test_apply_employer_portals.py
-    --exclude=/README.md
     --exclude=.DS_Store --exclude=/var/ --exclude=/tmp/ --exclude=/logs/
     --exclude=/examples/clients/*/var/ --exclude=/examples/clients/*/applications/
 )
 PROTECT=(
-    --filter='P /LICENSE' --filter='P /README.md' --filter='P /docs/README.uk.md'
+    --filter='P /LICENSE'
     --filter='P /docs/index.md' --filter='P /docs/privacy.md' --filter='P /.claude/'
     --filter='P /.git'
 )

@@ -4,7 +4,7 @@ tracks:
     keywords: [Android, Kotlin, Jetpack Compose, Kotlin Multiplatform]
     variant: android
     priority: 0
-    cv_file: CV_Android.pdf   # вкладення пакета (clients/<slug>/attachments/)
+    cv_file: CV_Android.pdf   # package attachment (clients/<slug>/attachments/)
   ai:
     keywords: [LLM, AI Agent, MCP, Claude]
     variant: ai

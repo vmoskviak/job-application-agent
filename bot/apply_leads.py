@@ -57,7 +57,7 @@ from bot.apply.ats_answers import AnswerContext
 from bot.apply.models import ApplyResult
 from bot.ats import ats_from_url
 from bot.dispatch_leads import _minutes, _package_for
-from bot.generators.inbox import append_row
+from bot.generators.inbox import append_row, mark_ready_row_submitted
 from bot.llm import LockBusy, machine_lock
 from bot.packages import Package
 from bot.platforms import (
@@ -107,6 +107,7 @@ class Driver(Protocol):
     # стан restricted | login_required | closed | open і зовнішнє посилання (None, якщо його нема)
     def resolve_offsite(self, page, url: str) -> tuple[str, str | None]: ...
     def probe_submitted(self, page) -> str: ...   # фраза підтвердження або ""
+    def is_closed(self, page) -> bool: ...        # оператор закрив вкладку hand-off
     def close(self, page) -> None: ...
 
 
@@ -131,6 +132,10 @@ class ApplyConfig:
     platform_per_pass: dict[str, int] = field(default_factory=lambda: {"linkedin": 2})
     platform_gap_seconds: int = 180
     platforms_path: Path | None = None   # var/state/platforms.json; None: лише декларація з targeting
+    market: str = "contract"             # de_employment: рядок «готово» в трекері стає подачею, apply_result.json
+    # Спільний бот оператора (telegram.mode: notify) не приймає кнопок цього клієнта:
+    # картка hand-off без кнопок, завершення за сторінкою (підтвердження чи закрита вкладка).
+    handoff_buttons: bool = True
 
 
 @dataclass
@@ -295,14 +300,24 @@ def _submitted(store: JsonlStore, rec: dict, lead: dict, ats: str | None, url: s
     tracker_error = ""
     try:
         until = (date.fromisoformat(today) + timedelta(days=cfg.followup_days)).isoformat()
-        append_row(tracker, date=today, company=company, position=title,
-                   source=f"{cfg.source_label}: {rec.get('platform') or ats or 'form'}",
-                   salary=lead.get("stated_rate") or "",
-                   status="portal_submitted (портал)", next_action=f"wait reply until {until}",
-                   notes=f"{url}, {screenshots[-1] if screenshots else 'no screenshot'}")
+        notes = f"{url}, {screenshots[-1] if screenshots else 'no screenshot'}"
+        done = cfg.market == "de_employment" and mark_ready_row_submitted(
+            tracker, company=company, position=title, status="portal_submitted (портал)", date=today, notes=notes)
+        if not done:
+            append_row(tracker, date=today, company=company, position=title,
+                       source=f"{cfg.source_label}: {rec.get('platform') or ats or 'form'}",
+                       salary=lead.get("stated_rate") or "",
+                       status="portal_submitted (портал)", next_action=f"wait reply until {until}", notes=notes)
     except Exception as e:  # noqa: BLE001 — форма вже подана; трекер поправить людина
         tracker_error = str(e)[:ERROR_CUT]
         mark(store, rec["id"], tracker_error=tracker_error)
+    if cfg.market == "de_employment" and rec.get("package_dir"):
+        # як у bot.apply.runner: ранковий агент і --cleanup читають apply_result.json пакета
+        try:
+            ApplyResult("submitted", rec.get("platform") or ats or "ats", url, list(screenshots),
+                        confirmation_text=sent_id).save(Path(rec["package_dir"]))
+        except OSError:
+            log.warning("apply_result.json для %s не записано", rec.get("id"), exc_info=True)
     text = lead_sent_card(company, title, label, sent_id.removeprefix(f"{label}:"), cfg.lang).text
     if tracker_error:
         text += "\n" + lead_failed_card(company, title, "tracker", tracker_error, cfg.lang).text
@@ -364,7 +379,7 @@ def _wait_handoff(store: JsonlStore, cards: JsonlStore, rec: dict, lead: dict, a
         card = handoff_card(lead.get("company") or "", lead.get("title") or "", reason, url, cfg.vnc_hint, cid,
                             cfg.lang)
         try:
-            _post(transport, cfg.chat_id, card.text, card.buttons)
+            _post(transport, cfg.chat_id, card.text, card.buttons if cfg.handoff_buttons else [])
         except Exception as e:  # noqa: BLE001 — без картки оператор не знає про вкладку: чекати нема кого
             cards.update(cid, status="not_posted")
             mark(store, rec["id"], status="failed", error=f"handoff card not posted: {e}"[:ERROR_CUT])
@@ -381,6 +396,11 @@ def _wait_handoff(store: JsonlStore, cards: JsonlStore, rec: dict, lead: dict, a
                                tracker, res, transport, cfg)
                 return
             if status == "skipped":
+                mark(store, rec["id"], status="held", reasons=["operator_skipped"])
+                return
+            if driver.is_closed(page):
+                # без кнопок відмова оператора це закрита вкладка
+                cards.update(cid, status="skipped", closed_at=now().strftime(_FMT))
                 mark(store, rec["id"], status="held", reasons=["operator_skipped"])
                 return
             phrase = driver.probe_submitted(page)

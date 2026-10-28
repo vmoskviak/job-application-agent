@@ -140,10 +140,10 @@ def test_morning_prompt_splits_candidate_and_operator_reports(monkeypatch):
     assert "erika.privat@example.com" in cand and "operator@example.com" in cand
     assert "Deine Bewerbungen vom" in cand
     # запрошення на співбесіду кандидатка бачить першим блоком свого листа
-    assert "Einladung von [Firma]" in cand and "Запрошення стоять першими" in cand
+    assert "Einladung von [Firma]" in cand and "Invitations come first" in cand
     assert cand.index("Einladung: Firma") < cand.index("heute sind N Bewerbungen")
     oper = text[text.index("### 9b. Bericht an den Operator"):]
-    assert "manual-список" in oper and "erika.privat@example.com" not in oper
+    assert "manual list" in oper and "erika.privat@example.com" not in oper
 
     bare = client.Client(slug=c.slug, root=c.root, cv=c.cv, tracks=c.tracks,
                          targeting=c.targeting, accounts=c.accounts,
@@ -177,11 +177,11 @@ def test_evening_mail_mode_sends_operator_nothing_at_night(monkeypatch):
     c = client.active()
     morning = render_run.render_prompt("morning", c)
     cand = morning[morning.index("### 9a. Bericht an die Kandidatin"):morning.index("### 9b. Bericht an den Operator")]
-    assert "bcc`: **operator@example.com" not in cand and "Без `cc` і `bcc`" in cand
+    assert "bcc`: **operator@example.com" not in cand and "Without `cc` and `bcc`" in cand
     oper = morning[morning.index("### 9b. Bericht an den Operator"):]
     assert "var/run/operator_report_YYYY-MM-DD.html" in oper
     assert "mcp__gmail__send_email` → **operator@example.com**" not in morning
-    assert "листів оператору НЕ слати" in morning
+    assert "do NOT send the operator any email" in morning
 
     evening = render_run.render_prompt("evening", c)
     assert "var/run/operator_evening_YYYY-MM-DD.html" in evening

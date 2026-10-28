@@ -137,10 +137,10 @@ tests/          pytest suite, synthetic fixtures only
 ## Language
 
 The engine targets the German market, so the generated documents, portal
-answers and most string matching are in German. The agent prompts, code
-comments and the internal docs (`docs/*.md`, `docs/README.uk.md`,
-`CLAUDE.md`) are in Ukrainian, the working language of the people who run it.
-This README and `docs/quickstart.md` are the English documents.
+answers and most string matching are in German. Docs, agent prompts, config
+templates and server scripts are in English. Older code comments in `bot/`
+and `scripts/` are still partly in Ukrainian, the working language of the
+people who built it; they are translated as the code is touched.
 
 ## Known limits
 

@@ -90,9 +90,11 @@ def build_config(c: _client.Client, args: argparse.Namespace) -> ApplyConfig:
     return ApplyConfig(limits=limits_from(c.targeting), lang=c.report_lang,
                        chat_id=c.telegram["chat_id"], dry_run=dry,
                        vnc_hint=str(os.environ.get(VNC_ENV, "")).strip(), handoff_until=_handoff_until(),
-                       lock_path=machine_lock_path(), source_label="contract",
+                       lock_path=machine_lock_path(),
+                       source_label="contract" if c.market == "contract" else "portal",
                        followup_days=int(c.targeting.get("followup_days") or 7),
-                       targeting=c.targeting, platforms_path=state_dir(c.var) / STATE_FILE)
+                       targeting=c.targeting, platforms_path=state_dir(c.var) / STATE_FILE,
+                       market=c.market, handoff_buttons=c.telegram["mode"] == "cards")
 
 
 def ctx_for(c: _client.Client, rec: dict, pkg: Package) -> AnswerContext:
@@ -101,9 +103,13 @@ def ctx_for(c: _client.Client, rec: dict, pkg: Package) -> AnswerContext:
     лід пакета. Пакет без вкладень: ValueError, run_apply кладе лід у held (attachment_none)."""
     if not pkg.attachments:
         raise ValueError("package has no attachments")
-    cv = next((p for p in pkg.attachments if Path(p).name.lower().startswith("cv")), pkg.attachments[0])
+    names = [(p, Path(p).name.lower()) for p in pkg.attachments]
+    # ринок найму: пакет із applications/<дата>/ має «<Ім'я>_<Прізвище>_CV.pdf» і «01_Anschreiben.pdf»
+    cv = next((p for p, n in names if n.startswith("cv") or n.endswith("_cv.pdf")), pkg.attachments[0])
+    letter = next((p for p, n in names if "anschreiben" in n or "cover" in n), None)
     return AnswerContext(profile=c.profile, lead=pkg.lead, note=pkg.note, resume=Path(cv),
-                         today=_now().date(), lang=pkg.lang, attachments=[Path(p) for p in pkg.attachments])
+                         today=_now().date(), lang=pkg.lang, attachments=[Path(p) for p in pkg.attachments],
+                         market=c.market, cover_letter=Path(letter) if letter else None)
 
 
 class PlaywrightDriver:
@@ -181,6 +187,12 @@ class PlaywrightDriver:
         from bot.apply import linkedin
 
         return linkedin.resolve_offsite(page, url)
+
+    def is_closed(self, page) -> bool:
+        try:
+            return bool(page.is_closed())
+        except Exception:  # noqa: BLE001 — браузер уже впав: вкладки теж нема
+            return True
 
     def probe_submitted(self, page) -> str:
         """Фраза підтвердження, коли кнопки Submit уже не видно; "" інакше або якщо вкладку закрили.

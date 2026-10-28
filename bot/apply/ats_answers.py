@@ -57,6 +57,8 @@ class AnswerContext:
     today: date
     lang: str
     attachments: list[Path] = field(default_factory=list)   # усі вкладення пакета (freelancermap); resume: CV
+    market: str = "contract"            # de_employment: зарплата на рік, дати німецьким форматом
+    cover_letter: Path | None = None    # Anschreiben як файл для поля «Anschreiben hochladen»
 
 
 @dataclass
@@ -126,6 +128,31 @@ def _job_in_eu(lead: dict) -> bool:
         return True
     countries = _scope_countries(scope) if scope.startswith("country:") else []
     return bool(countries) and all(c in EU_EEA_CH for c in countries)
+
+
+# Німецькі <select> без правила у form_answers: типові відповіді ринку найму.
+_DE_SELECT_DEFAULTS: tuple[tuple[str, str], ...] = (
+    (r"k(?:ü|ue)ndigungsfrist", r"^(?:sofort|keine|ohne|nicht)"),
+    (r"umzug|relocat", r"^(?:nein|no)\b"),
+    (r"w(?:ä|ae)hrung|currency", r"\beur"),
+    (r"\bland\b|country", r"^(?:deutschland|germany)"),
+)
+
+
+def _date_text(f: Field, iso: str) -> Answer:
+    """type=date хоче ISO, текстове поле німецької форми — dd.mm.yyyy."""
+    if f.type == "date":
+        return Answer("date", iso)
+    y, m, d = iso.split("-")
+    return Answer("text", f"{d}.{m}.{y}")
+
+
+def _salary_text(f: Field, profile: dict) -> Answer | None:
+    """Річна зарплата з профілю; числове поле отримує лише цифри."""
+    raw = re.sub(r"[^0-9]", "", str(profile.get("default_salary") or ""))
+    if not raw:
+        return None
+    return Answer("text", raw if f.type == "number" else f"{raw} EUR")
 
 
 def _rate_text(profile: dict) -> str | None:
@@ -229,14 +256,49 @@ def answer_for(f: Field, ctx: AnswerContext) -> Answer | None:
         return text(f"{city}, {country}" if country else city)
     if kind == "country":
         if f.options:
-            hit = next((o for o in f.options if "germany" in o.lower()), None)
+            hit = next((o for o in f.options if re.search(r"germany|deutschland", o, re.IGNORECASE)), None)
             if hit:
                 return Answer("option", hit)
         return Answer("text", "Germany")
     if kind == "resume":
         return Answer("file", str(ctx.resume))
     if kind == "cover_letter_file":
-        return Answer("skip")
+        return Answer("file", str(ctx.cover_letter)) if ctx.cover_letter else Answer("skip")
+    if kind == "street":
+        return text(p.get("street"))
+    if kind == "zip":
+        return text(p.get("zip_code"))
+    if kind == "city":
+        return text(p.get("city"))
+    if kind == "birth_date":
+        raw = str(p.get("birth_date") or "")
+        return _date_text(f, raw) if re.fullmatch(r"\d{4}-\d{2}-\d{2}", raw) else None
+    if kind == "nationality":
+        want = str(p.get("nationality") or "")
+        if not want:
+            return None
+        if f.options:
+            hit = _option_like(f.options, want) or next(
+                (o for o in f.options if o.lower().startswith(want.lower()[:5])), None)
+            return Answer("option", hit) if hit else None
+        return Answer("text", want)
+    if kind == "salutation":
+        want = str(p.get("salutation") or "")
+        options = f.options or []
+        hit = next((o for o in options if o.strip().lower().startswith(want.lower())), None) if want else None
+        return Answer("option", hit) if hit else None
+    if kind == "salary":
+        if ctx.market == "de_employment":
+            return _salary_text(f, p)
+        r = _rate_text(p)
+        return Answer("text", r) if r else None
+    if kind == "source":
+        t = text_answer(meta, answers)
+        if f.options:
+            hit = _option_like(f.options, t) if t else None
+            hit = hit or next((o for o in f.options if re.search(r"stepstone|linkedin|online|internet|jobb(?:ö|oe)rse", o, re.I)), None)
+            return Answer("option", hit) if hit else None
+        return text(t)
     if kind == "cover_letter_text":
         return text(ctx.note)
     if kind == "eeo":
@@ -249,6 +311,9 @@ def answer_for(f: Field, ctx: AnswerContext) -> Answer | None:
     if kind == "ack":
         return Answer("check")
     if kind == "date":
+        if ctx.market == "de_employment":
+            from bot.apply.forms import earliest_start_iso
+            return _date_text(f, earliest_start_iso(ctx.today))
         return Answer("date", earliest_start(ctx.today, str(p.get("availability", ""))).isoformat())
     if kind == "choice":
         options = f.options
@@ -263,6 +328,11 @@ def answer_for(f: Field, ctx: AnswerContext) -> Answer | None:
             return Answer("option", options[idx])
         t = text_answer(meta, answers)
         hit = _option_like(options, t) if t else None
+        if hit is None and ctx.market == "de_employment":
+            for pat, opt_re in _DE_SELECT_DEFAULTS:
+                if re.search(pat, meta, re.IGNORECASE):
+                    hit = next((o for o in options if re.search(opt_re, o.strip(), re.IGNORECASE)), None)
+                    break
         return Answer("option", hit) if hit else None
     # unknown | free_text
     if f.combobox:

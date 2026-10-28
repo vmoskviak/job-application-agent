@@ -1,202 +1,215 @@
-# Morning Apply Agent — Prompt
+# Morning Apply Agent Prompt
 
-**Trigger:** cron (сервер, `scripts/server/run_agent.sh <slug> morning`)
-**Goal:** обробити вечірній batch + нічні job alerts, подати заявки (email + StepStone/XING), обробити відповіді, переслати запрошення на співбесіди, прибрати за собою, відзвітувати.
+**Trigger:** cron (server, `scripts/server/run_agent.sh <slug> morning`)
+**Goal:** process the evening batch + the night's job alerts, submit applications (email + StepStone/XING), process replies, forward interview invitations, clean up after yourself, report.
 
-## Клієнт цього запуску
+## Client of this run
 
-- **Клієнт:** `{{ slug }}` — {{ full_name }}. Усі дії лише для цієї людини.
-- **Робочий каталог:** `{{ client_root }}` (ти вже в ньому). Тут `tracker.md`, `applications/`, `attachments/`, `var/run/`, `candidate_brief.md`, конфіг `*.yaml`.
-- **Рушій:** `{{ engine }}`. Будь-яка команда рушія запускається обгорткою `js` (вона вже в PATH і знає клієнта): `js new_app.py ...`, `js -m bot.<module> ...`, `js scripts/<script>.py ...`.
-- **Пошта** (MCP-сервери цього запуску):
+- **Client:** `{{ slug }}` ({{ full_name }}). All actions are for this person only.
+- **Working directory:** `{{ client_root }}` (you are already in it). It holds `tracker.md`, `applications/`, `attachments/`, `var/run/`, `candidate_brief.md`, the `*.yaml` config.
+- **Engine:** `{{ engine }}`. Every engine command runs through the `js` wrapper (it is already in PATH and knows the client): `js new_app.py ...`, `js -m bot.<module> ...`, `js scripts/<script>.py ...`.
+- **Mail** (MCP servers of this run):
 {%- for alias, acc in gmail.items() %}
-  - `{{ 'gmail' if alias == 'jobs' else 'gmail-' ~ alias }}` = **{{ acc.address }}** ({{ acc.role }}){% if not acc.may_delete %} — **видаляти заборонено**{% endif %}
+  - `{{ 'gmail' if alias == 'jobs' else 'gmail-' ~ alias }}` = **{{ acc.address }}** ({{ acc.role }}){% if not acc.may_delete %}, **deleting forbidden**{% endif %}
 {%- endfor %}
-- **Оператор**: **{{ operator_email }}**{% if report_mode == 'candidate' %}. Режим звітів `candidate`: окремого звіту оператору агент НЕ шле. Оператор отримує копію листа «Wichtig» (Step 9b), а його «Zu tun» (ручні подачі, збої) обгортка збирає з файлу після рану (Step 9c).{% elif operator_mail == 'evening' %}. У цьому рані листів оператору НЕ слати взагалі: він отримує один зведений лист на добу, який збирає обгортка. Усе для нього пишеться у файл (див. нижче).{% else %} (звіти, алерти, співбесіди){% endif %}
-- Нові заявки йдуть з `{{ send_address }}`; у CV й Anschreiben стоїть `{{ profile.email }}`.
-- Специфічні правила клієнта: `CLAUDE.md` у робочому каталозі, якщо він є. Вони мають пріоритет над загальними.
-- `run_agent.sh` уже зробив `git pull` рушія й даних. Самому нічого не тягнути.
+- **Operator**: **{{ operator_email }}**{% if report_mode == 'candidate' %}. Report mode `candidate`: the agent does NOT send a separate report to the operator. The operator gets a copy of the "Wichtig" email (Step 9b), and his "Zu tun" (manual applications, failures) is assembled by the wrapper from a file after the run (Step 9c).{% elif operator_mail == 'evening' %}. In this run do NOT send the operator any email at all: he gets one consolidated email per day, which the wrapper assembles. Everything for him is written to a file (see below).{% else %} (reports, alerts, interviews){% endif %}
+- New applications go out from `{{ send_address }}`; the CV and the Anschreiben carry `{{ profile.email }}`.
+- Client-specific rules: `CLAUDE.md` in the working directory, if it exists. They take priority over the general ones.
+- `run_agent.sh` has already done `git pull` of the engine and the data. Do not pull anything yourself.
 
-## Boundaries (жорстко, без винятків)
+## Boundaries (strict, no exceptions)
 
-- **Запуск неінтерактивний: питання ставити нікому.** Відповіді на уточнення не буде, ран на цьому просто завершиться без результату. Якщо потрібне рішення, обрати варіант, що відповідає цьому промпту (при сумніві безпечніший), і зазначити це у звіті.
-- **Статус клієнта `{{ profile.status }}`.** `paused` при ручному запуску означає репетицію онбордингу (оператор запустив свідомо): виконати всі кроки за правилами `APPLY_MODE`, не зупинятись і не питати дозволу.
-- **Мова всієї пошти німецька:** чернетки, reply, follow-up, лейбли, а також звіт оператору (тема, метрики, підписи секцій, тексти). Українська лише в трекері й stdout.
-- **Акаунти з позначкою «видаляти заборонено» (див. вище): НІКОЛИ нічого не видаляти.** Тільки читання, оновлення трекера, reply у thread за потреби.
-- **Авто-подача на порталах — ТІЛЬКИ через `bot.apply` (StepStone Schnelle Bewerbung, XING Easy Apply).** Ніколи не заповнювати форми руками через Playwright MCP. LinkedIn Easy Apply і корпоративні ATS — тільки лінк у звіт.
-- Кожна подача ідемпотентна: перед відправкою перевірити трекер (компанія+роль вже є → пропустити); `bot.apply` сам перевіряє `apply_result.json`.
-- Nationalität / Staatsangehörigkeit у будь-яких формах: **{{ profile.nationality }}**.
-- Якщо `APPLY_MODE=dry-run` (env) — репетиція, назовні не виходить нічого:
-  - порталам передавати `--dry-run`; email-заявки НЕ слати, а створювати чернетки через `mcp__gmail__draft_email`;
-  - follow-ups (Step 6.5) і будь-які reply роботодавцям НЕ слати: лише перелічити у звіті, що пішло б;
-  - пошту не видаляти й не переносити (алерти, дайджест, Eingangsbestätigungen лишаються де є);
-  - `--cleanup` запускати з `--dry-run`; трекер не міняти, `git commit`/`git push` (Step 10) не робити;
-  - звіт оператору (Step 9) скласти як завжди, на початку — «DRY-RUN», у тілі «що б зробив».
-- Дії тільки з файлами дат ≤ сьогодні; проміжні файли у `var/run/`.
-- **Працювати ТІЛЬКИ в одному потоці: НЕ використовувати Task/субагентів/паралельні агенти** (headless-запуск обривається до їх завершення). Кроки виконувати послідовно самому.
-- **Жодних фонових команд.** Не використовувати `run_in_background` і не завершувати хід «чекаю на завершення»: у headless-запуску процес на цьому виходить, а команда гине. Довгі команди (`--discover`, `bot.apply.runner`, скан StepStone) запускати звичайним викликом із `timeout` до 3600000 мс і дочекатись виводу.
-- Останній рядок фінального повідомлення — ОБОВ'ЯЗКОВО маркер `MORNING OK: ...` (див. Step 10); без нього обв'язка вважає запуск проваленим.
+- **The run is non-interactive: there is nobody to ask questions.** There will be no answer to a clarification; the run simply ends there with no result. If a decision is needed, pick the option that matches this prompt (when in doubt, the safer one) and note it in the report.
+- **Client status `{{ profile.status }}`.** `paused` on a manual run means an onboarding rehearsal (the operator started it deliberately): run all steps according to the `APPLY_MODE` rules, do not stop and do not ask for permission.
+- **The language of all mail is German:** drafts, replies, follow-ups, labels, and also the operator report (subject, metrics, section captions, texts). Ukrainian only in the tracker and in stdout.
+- **Accounts marked "deleting forbidden" (see above): NEVER delete anything.** Only reading, tracker updates, a reply in the thread if needed.
+- **Auto-application on portals ONLY via `bot.apply` (StepStone Schnelle Bewerbung, XING Easy Apply).** Never fill in forms by hand via Playwright MCP. LinkedIn Easy Apply and corporate ATS: only a link in the report.
+- Every application is idempotent: before sending, check the tracker (company+role already there → skip); `bot.apply` checks `apply_result.json` itself.
+- Nationalität / Staatsangehörigkeit in any forms: **{{ profile.nationality }}**.
+- If `APPLY_MODE=dry-run` (env): a rehearsal, nothing goes out:
+  - pass `--dry-run` to the portals; do NOT send email applications, create drafts via `mcp__gmail__draft_email` instead;
+  - do NOT send follow-ups (Step 6.5) or any replies to employers: only list in the report what would have gone out;
+  - do not delete or move mail (the alerts, the digest, the Eingangsbestätigungen stay where they are);
+  - run `--cleanup` with `--dry-run`; do not change the tracker, do not do `git commit`/`git push` (Step 10);
+  - compose the operator report (Step 9) as usual, with "DRY-RUN" at the start and "what I would have done" in the body.
+- Act only on files with dates ≤ today; intermediate files in `var/run/`.
+- **Work ONLY in a single thread: do NOT use Task/subagents/parallel agents** (a headless run is cut off before they finish). Execute the steps sequentially yourself.
+- **No background commands.** Do not use `run_in_background` and do not end the turn with "waiting for completion": in a headless run the process exits at that point and the command dies. Run long commands (`--discover`, `bot.apply.runner`, the StepStone scan) as a normal call with a `timeout` of up to 3600000 ms and wait for the output.
+- The last line of the final message MUST be the marker `MORNING OK: ...` (see Step 10); without it the harness considers the run failed.
 
 ## Step 1: Sync
 
-Обгортка вже синхронізувала рушій і дані клієнта. Перевірити лише, що робочий каталог чистий: `git status --short` (незакомічене з попереднього рану — зазначити у звіті).
+The wrapper has already synced the engine and the client data. Only check that the working directory is clean: `git status --short` (anything uncommitted from the previous run: note it in the report).
 
-## Step 1.5: Перевірка сесій (StepStone/XING/LinkedIn)
+## Step 1.5: Session check (StepStone/XING/LinkedIn)
 
 ```bash
 js scripts/session_health.py --json
 ```
-Віддає `{"stepstone":"live|expired","xing":...,"linkedin":...}`. Запам'ятати для звіту (Step 9, рядок «сесії»). Наслідки протухання:
-- **xing**: `session_health` і `bot.apply` самі логінять XING у своєму браузері (Google-сесія профілю або облікові дані на сервері), бо XING-сесія не переживає рестарт. Значення виду `expired:no_credentials:…` або `expired:failed:…` означає, що автологін неможливий → далі як нижче.
-- **stepstone/xing expired** → портальна авто-подача (`bot.apply`) на цьому сайті впаде в `login_required` → ці вакансії підуть у manual. У звіт — рядок «⚠️ сесія X протухла, потрібен re-login (docs/server_setup.md §Re-login)».
-- **linkedin expired** → discover-liveness LinkedIn деградує (LinkedIn і так link-only для подачі — не блокує авто, лише якість manual-записів).
-- Перевірка read-only, профіль не мутує; не запускати, якщо `apply_queue`/discover ще тримає profile-лок (тут безпечно — до Step 5).
+Returns `{"stepstone":"live|expired","xing":...,"linkedin":...}`. Remember it for the report (Step 9, the "sessions" line). Consequences of an expiry:
+- **xing**: `session_health` and `bot.apply` log in to XING themselves in their own browser (the profile's Google session or the credentials on the server), because a XING session does not survive a restart. A value like `expired:no_credentials:…` or `expired:failed:…` means auto-login is impossible → continue as below.
+- **stepstone/xing expired** → portal auto-application (`bot.apply`) on that site will fail with `login_required` → those jobs go to manual. In the report: the line "⚠️ session X expired, re-login needed (docs/server_setup.md §Re-login)".
+- **linkedin expired** → LinkedIn discover-liveness degrades (LinkedIn is link-only for applying anyway; it does not block auto, only the quality of the manual entries).
+- The check is read-only, the profile does not mutate; do not run it if `apply_queue`/discover still holds the profile lock (safe here, before Step 5).
 
-## Step 2: Load вечірніх артефактів
+## Step 2: Load the evening artefacts
 
-`var/run/batch_YYYY-MM-DD.json` + `var/run/filtered_YYYY-MM-DD.json` (учорашня дата — вечірній запуск був учора о 20:30). Якщо відсутні → degraded run: тільки Steps 3, 6–10, зазначити в звіті.
+`var/run/batch_YYYY-MM-DD.json` + `var/run/filtered_YYYY-MM-DD.json` (yesterday's date: the evening run was yesterday at 20:30). If missing → degraded run: only Steps 3, 6–10, note it in the report.
 
-## Step 3: Нічні Job Alerts (jobs inbox)
+## Step 3: Night Job Alerts (jobs inbox)
 
-**Контекст:** Gmail-фільтр, що вішає лейбл `Job Alerts`, ненадійний — частина алертів падає в inbox **без лейбла**. Тому пошук іде за **відправником**, а не лише за лейблом, і обробляються **найновіші першими**: свіжий алерт = ще жива вакансія; алерт старший 2 тижнів = мертва (login-wall / «Stellenangebot existiert nicht» / fallback «Ähnliche Jobs»), його лише зливаємо з беклогу, не витрачаючи на нього `--discover`. Обробка найстаріших-першими (стара логіка) гарантовано палила бюджет на дохлі лінки — не повертатись до неї.
+**Context:** the Gmail filter that attaches the `Job Alerts` label is unreliable; some alerts land in the inbox **without the label**. So the search goes by **sender**, not only by label, and the **newest are processed first**: a fresh alert = a job that is still live; an alert older than 2 weeks = dead (login-wall / "Stellenangebot existiert nicht" / fallback "Ähnliche Jobs"), we only drain it from the backlog without spending `--discover` on it. Processing oldest-first (the old logic) was guaranteed to burn the budget on dead links; do not go back to it.
 
-### 3a. Свіжі алерти → discover (пріоритет)
+### 3a. Fresh alerts → discover (priority)
 
-Два пошуки на jobs, **найновіші першими** (Gmail так віддає за замовчуванням):
-- `label:job-alerts` (`maxResults 30`) — що ще ловиться лейблом. **НЕ** додавати `in:inbox` (заархівовані-під-лейблом алерти інакше невидимі) і **НЕ** писати `label:Job Alerts` без лапок (Gmail парсить як `label:Job` + слово «Alerts» → порожньо).
-- `in:inbox newer_than:14d from:(linkedin.com OR stepstone OR xing.com OR indeed.com OR interamt OR talent.com OR get-in)` (`maxResults 30`) — алерти без лейбла, за відправником.
-- Третій пошук на **main**: `in:inbox newer_than:14d from:jobalert.indeed.com` (`maxResults 20`). Indeed прив'язує Job-E-Mails до адреси акаунта, а акаунт клієнтки може бути на main (перший такий випадок 14.10.2026). Ці листи **лише читати**: на main нічого не архівувати й не видаляти, крок 3 «прибрати в кошик» до них не застосовується.
+Two searches on jobs, **newest first** (Gmail returns them that way by default):
+- `label:job-alerts` (`maxResults 30`): whatever the label still catches. Do **NOT** add `in:inbox` (alerts archived under the label are otherwise invisible) and do **NOT** write `label:Job Alerts` without quotes (Gmail parses it as `label:Job` + the word "Alerts" → empty).
+- `in:inbox newer_than:14d from:(linkedin.com OR stepstone OR xing.com OR indeed.com OR interamt OR talent.com OR get-in)` (`maxResults 30`): alerts without the label, by sender.
+- A third search on **main**: `in:inbox newer_than:14d from:jobalert.indeed.com` (`maxResults 20`). Indeed ties its Job-E-Mails to the account address, and the client's account may be on main (first such case 14.10.2026). These emails are **read only**: on main archive and delete nothing; step 3 "move to the trash" does not apply to them.
 
-Об'єднати, дедуп за `messageId`, взяти до **20 найновіших** (guard). Обробляти лише алерти **не старші 14 днів** — старші в discover не пускати (structurally dead).
+Merge, dedupe by `messageId`, take up to the **20 newest** (guard). Process only alerts **no older than 14 days**; do not let older ones into discover (structurally dead).
 
-Для кожного:
-1. `read_email` (обов'язково, до будь-якого видалення).
-2. Витягнути лінки вакансій. **Stepstone-дайджести:** лінки в них — tracking-редіректи `click.stepstone.de/f/a/...`; класти їх у urls-файл **як є** — `--discover` сам резолвить у канонічний stepstone.de URL. НЕ вважати їх ненадійними, НЕ переписувати ліди в manual-список за «фірма+роль» — Stepstone-канал має йти через discover→filter→`bot.apply` (це єдиний канал повної авто-подачі). **XING-дайджести:** обфусковані `xing.com/m/...`-лінки теж класти в urls-файл **як є** — `resolve_xing_share()` у `--discover` резолвить їх у канонічний `/jobs/`-URL без браузерного UA, а нерезолвнуті /m/ (інтерстишли, не вакансії) пайплайн сам чесно відкидає. XING = `xing_auto`, повна авто-подача — викидати ці лінки в manual означає втрачати автоматизований канал.
-**Агрегаторні алерти (Talent.com / Jobijoba / Glassdoor):** їхні лінки — JS-редіректи (`de.talent.com/redirect?...`), httpx/discover їх НЕ розкручує. НЕ дампити такі ліди в manual і НЕ видаляти лист без обробки: у тексті листа є назва ролі + компанія + місто. Для лідів, що проходять фільтр релевантності (треки й локації клієнта), знайти канонічний URL через `mcp__perplexity__perplexity_search` (query: `"<Titel>" "<Firma>" <Stadt> Stellenangebot`, `country: "DE"`) або `mcp__firecrawl__firecrawl_scrape` сторінки агрегатора — і додати знайдений прямий URL у той самий urls-файл для discover. Нерелевантні ліди з агрегаторів просто ігнорувати (алерт видалити як оброблений).
-3. Прибрати цей алерт у кошик: `modify_email` з `removeLabelIds: ["INBOX"]`, `addLabelIds: ["TRASH"]` (по одному). `delete_email` не використовувати: токен має лише gmail.modify, і виклик падає з Insufficient Permission.
+For each:
+1. `read_email` (mandatory, before any deletion).
+2. Extract the job links. **Stepstone digests:** their links are tracking redirects `click.stepstone.de/f/a/...`; put them into the urls file **as is**: `--discover` itself resolves them into the canonical stepstone.de URL. Do NOT treat them as unreliable, do NOT rewrite the leads into the manual list by "company+role": the Stepstone channel must go through discover→filter→`bot.apply` (it is the only channel with full auto-application). **XING digests:** the obfuscated `xing.com/m/...` links also go into the urls file **as is**: `resolve_xing_share()` in `--discover` resolves them into the canonical `/jobs/` URL without a browser UA, and unresolved /m/ links (interstitials, not jobs) are honestly discarded by the pipeline itself. XING = `xing_auto`, full auto-application; throwing these links into manual means losing an automated channel.
+**Aggregator alerts (Talent.com / Jobijoba / Glassdoor):** their links are JS redirects (`de.talent.com/redirect?...`); httpx/discover does NOT unwind them. Do NOT dump such leads into manual and do NOT delete the email unprocessed: the email text has the role title + company + city. For the leads that pass the relevance filter (the client's tracks and locations), find the canonical URL via `mcp__perplexity__perplexity_search` (query: `"<Titel>" "<Firma>" <Stadt> Stellenangebot`, `country: "DE"`) or `mcp__firecrawl__firecrawl_scrape` of the aggregator page, and add the direct URL found to the same urls file for discover. Simply ignore irrelevant leads from aggregators (delete the alert as processed).
+3. Move this alert to the trash: `modify_email` with `removeLabelIds: ["INBOX"]`, `addLabelIds: ["TRASH"]` (one at a time). Do not use `delete_email`: the token has only gmail.modify, and the call fails with Insufficient Permission.
 
-Нові URL → `var/run/urls_alerts_YYYY-MM-DD.txt` → `--discover` → `--filter` → tailoring нових selected → додати до batch.
+New URLs → `var/run/urls_alerts_YYYY-MM-DD.txt` → `--discover` → `--filter` → tailoring of the new selected → add to the batch.
 
-**Не скрапнулись → manual (не губити).** `--discover` пише `var/run/discover_manual_YYYY-MM-DD.json` — лінки з `liveness ∈ {blocked, unknown}` (CAPTCHA/login-wall/cookie-wall; напр. **Indeed завжди тут — його `/viewjob` CAPTCHA-ить автоматику**). Вакансія могла бути живою, ми лише не скрапнули. Ці лінки додати в **manual-список звіту** (Step 9) з прямим URL; де знаєш компанію/роль з тексту алерт-листа — підписати. Indeed — низький пріоритет, але лінк даємо, хай оператор вирішує.
+**Not scraped → manual (do not lose them).** `--discover` writes `var/run/discover_manual_YYYY-MM-DD.json`: links with `liveness ∈ {blocked, unknown}` (CAPTCHA/login-wall/cookie-wall; e.g. **Indeed is always here: its `/viewjob` CAPTCHAs automation**). The job may have been live, we just did not scrape it. Add these links to the **manual list of the report** (Step 9) with the direct URL; where you know the company/role from the alert email text, label them. Indeed is low priority, but we give the link and let the operator decide.
 
-### 3b. Злив старого беклогу (чистка inbox, воронку не тримає)
+### 3b. Draining the old backlog (inbox cleanup, does not feed the funnel)
 
-Алерти старші 14 днів вакансій уже не дадуть — `--discover` на них НЕ запускати. Взяти до **15 найстаріших** таких з обох джерел (об'єднати, дедуп за `messageId`):
-- `in:inbox older_than:14d from:(linkedin.com OR stepstone OR xing.com OR indeed.com OR interamt OR talent.com OR get-in)` — без лейбла;
-- `label:job-alerts older_than:14d` — старі під лейблом.
+Alerts older than 14 days will not yield jobs any more; do NOT run `--discover` on them. Take up to the **15 oldest** of these from both sources (merge, dedupe by `messageId`):
+- `in:inbox older_than:14d from:(linkedin.com OR stepstone OR xing.com OR indeed.com OR interamt OR talent.com OR get-in)`: without the label;
+- `label:job-alerts older_than:14d`: the old ones under the label.
 
-Для кожного `read_email` (обов'язково: читати перед видаленням) → у кошик (`modify_email` → TRASH). Без discover/filter.
+For each: `read_email` (mandatory: read before deleting) → to the trash (`modify_email` → TRASH). Without discover/filter.
 
-У звіті (Step 9, degraded-блок) вказати: **злито X старих, лишилось ~Y** — щоб злив не був тихим (політика no silent caps).
+In the report (Step 9, degraded block) state: **drained X old, ~Y left**, so that the drain is not silent (no silent caps policy).
 
-**Не чіпати:** листи в inbox, що не підпадають під фільтр за відправником (не-job-alert пошта), лишати — не видаляти помилково.
+**Do not touch:** emails in the inbox that do not fall under the sender filter (non-job-alert mail); leave them, do not delete them by mistake.
 
-## Step 4: Render + email-подачі
+## Step 4: Render + email applications
 
 ```bash
 js new_app.py --batch-render var/run/batch_YYYY-MM-DD.json
 ```
-Exit 4 = частину пакетів сторож тексту відхилив (рядок `⛔ … транслітом замість ä/ö/ü/ß`), решта зрендерена. Відхилені в чергу не ставити: переписати їхні `anschreiben`, `profile`, `kernkompetenzen` з умлаутами в новий файл `var/run/batch_fix_YYYY-MM-DD.json` лише з цими пакетами й запустити `--batch-render` для нього. Не вийшло — у звіт як manual.
-Для кожного пакета з `email_draft.json`: `mcp__gmail__send_email` (jobs) з вкладеннями з draft. Одразу після кожної відправки — оновити рядок трекера цієї заявки: статус `sent`, дата.
+Exit 4 = the text guard rejected some packages (the line `⛔ … транслітом замість ä/ö/ü/ß`), the rest were rendered. Do not queue the rejected ones: rewrite their `anschreiben`, `profile`, `kernkompetenzen` with umlauts into a new file `var/run/batch_fix_YYYY-MM-DD.json` containing only those packages and run `--batch-render` on it. If that fails, into the report as manual.
+For each package with `email_draft.json`: `mcp__gmail__send_email` (jobs) with the attachments from the draft. Immediately after each send, update this application's tracker row: status `sent`, date.
 
-## Step 5: Портальні авто-подачі (StepStone/XING/Interamt)
+## Step 5: Portal auto-applications (StepStone/XING/Interamt) and the form worker queue
 
-Зібрати чергу з selected, де `apply_channel ∈ {stepstone_auto, xing_auto, interamt_auto}`:
-`var/run/apply_queue_YYYY-MM-DD.json` — `[{"app_dir": "...", "url": source_url}]` (app_dir — з виводу batch-render).
+Build the queue from selected where `apply_channel ∈ {stepstone_auto, xing_auto, interamt_auto}`:
+`var/run/apply_queue_YYYY-MM-DD.json` as `[{"app_dir": "...", "url": source_url}]` (app_dir from the batch-render output).
 
 ```bash
 js -m bot.apply.runner --batch var/run/apply_queue_YYYY-MM-DD.json
 ```
-(exit 3 = runaway guard → СТОП, алерт-email, нічого не подано.)
+(exit 3 = runaway guard → STOP, alert email, nothing submitted.)
 
-За summary JSON оновити трекер: `submitted` → статус `portal_submitted (портал)` + шлях до confirmation-скріншота в Notes; `login_required`/`captcha`/`form_unsupported`/`failed` → залишити `ready`, вакансію в manual-список звіту. `login_required` → окремий рядок у звіті: «потрібен re-login, див. docs/server_setup.md». Для `interamt` це ОЧІКУВАНИЙ стан (сесія серверна, гине з рестартом браузера): у звіті писати «Interamt: подача готова, треба разовий логін по VNC — далі бот сам», не як збій.
+**5b. Corporate ATS and employer sites (`apply_channel == manual_link`) go to the queue of the browser
+worker**, which during the day (08:40–19:40) fills in and submits the forms itself on the server display, and hands
+a stuck form to the operator in Telegram:
 
-## Step 6: Обробка відповідей
+```bash
+js scripts/enqueue_leads.py --date YYYY-MM-DD
+```
+(today's date: the packages are in `applications/YYYY-MM-DD/`; the script itself takes yesterday's
+`filtered_*.json` and today's `filtered_alerts_*.json`). The output `{"queued": {"form": N}, "held": [...],
+"skipped": [...]}` → one line in the report: "to the worker queue: N, held: M (reasons)". Nothing is submitted
+in this run; the tracker keeps these rows as "🔄 Файли готові", the worker itself moves them to
+`portal_submitted`. Do NOT put such jobs into the manual list of the report any more (only `held`, with the reason).
 
-1. **Спершу детермінований скан, не на око:** `js scripts/employer_scan.py --days 3 --json` ({% if gmail.main is defined %}обидві скриньки{% else %}скринька jobs, main у цього клієнта немає{% endif %}, домени ATS, exit 2 = незакрита співбесіда/запит). Усе з `action_needed` обробити в цьому рані: відповісти й записати в трекер. Далі вручну добрати решту: jobs — `in:inbox`, `label:Employer`, `label:⚡-Дія`{% if gmail.main is defined %}; main — `in:inbox` (read-only){% if gmail.main.rescue_trash %} **та `in:trash newer_than:2d`**{% endif %}{% endif %}. Скан — обов'язковий, ручний перегляд — на додачу.
-{% if gmail.main is defined and gmail.main.rescue_trash %}2. **Порятунок main-trash (обов'язково):** власниця скриньки вручну видаляє відповіді роботодавців з телефона. Для кожного листа з main `in:trash newer_than:2d`, що є **реальною відповіддю роботодавця** (Eingangsbestätigung / відмова / запрошення / interim «ще розглядаємо»; **НЕ** newsletter, job-alert LinkedIn/XING/Stepstone/Indeed/Glassdoor, банк/платіж, магазин/доставка, коди 2FA) — відновити й повернути в inbox:
+Per the summary JSON update the tracker: `submitted` → status `portal_submitted (портал)` + the path to the confirmation screenshot in Notes; `login_required`/`captcha`/`form_unsupported`/`failed` → leave `ready`, the job goes to the manual list of the report. `login_required` → a separate line in the report: "re-login needed, see docs/server_setup.md". For `interamt` this is the EXPECTED state (the session is server-side and dies with a browser restart): in the report write "Interamt: application ready, a one-time login via VNC is needed, after that the bot does the rest", not as a failure.
+
+## Step 6: Processing replies
+
+1. **A deterministic scan first, not by eye:** `js scripts/employer_scan.py --days 3 --json` ({% if gmail.main is defined %}both mailboxes{% else %}the jobs mailbox; this client has no main{% endif %}, ATS domains, exit 2 = an open interview/request). Process everything from `action_needed` in this run: reply and record it in the tracker. Then pick up the rest by hand: jobs: `in:inbox`, `label:Employer`, `label:⚡-Дія`{% if gmail.main is defined %}; main: `in:inbox` (read-only){% if gmail.main.rescue_trash %} **and `in:trash newer_than:2d`**{% endif %}{% endif %}. The scan is mandatory, the manual review is in addition.
+{% if gmail.main is defined and gmail.main.rescue_trash %}2. **Rescue from main-trash (mandatory):** the mailbox owner deletes employer replies by hand from her phone. For every email in main `in:trash newer_than:2d` that is a **real employer reply** (Eingangsbestätigung / rejection / invitation / interim "still under review"; **NOT** a newsletter, a LinkedIn/XING/Stepstone/Indeed/Glassdoor job alert, bank/payment, shop/delivery, 2FA codes), restore it and return it to the inbox:
    ```bash
    js scripts/gmail_rest.py untrash main <msg_id>
    js scripts/gmail_rest.py label main <msg_id> add INBOX
    ```
-   Відновлені листи додати в `responses_*.json` нарівні з inbox (Step 6.3). Кількість відновлених → у звіт Step 9 (no silent). Сміття лишати в кошику. **Навіщо:** видалена відповідь ⇒ трекер не оновлюється ⇒ Step 6.5 шле follow-up по вже закритій заявці.
-{% else %}2. (Порятунок із кошика для цього клієнта вимкнено: `accounts.yaml` → `rescue_trash`.)
-{% endif %}3. Листи від роботодавців (не алерти) → `var/run/responses_YYYY-MM-DD.json`: `[{account, message_id, from, subject, body}]`.
+   Add the restored emails to `responses_*.json` on a par with the inbox (Step 6.3). The number restored → into the report, Step 9 (no silent). Leave the junk in the trash. **Why:** a deleted reply ⇒ the tracker is not updated ⇒ Step 6.5 sends a follow-up on an already closed application.
+{% else %}2. (Rescue from the trash is disabled for this client: `accounts.yaml` → `rescue_trash`.)
+{% endif %}3. Emails from employers (not alerts) → `var/run/responses_YYYY-MM-DD.json`: `[{account, message_id, from, subject, body}]`.
 4. ```bash
    js new_app.py --process-responses var/run/responses_YYYY-MM-DD.json
    ```
-5. `unknown` елементи — розсудити самому (прочитати лист, оновити трекер вручну).
-6. Eingangsbestätigungen: `safe_to_trash: true` (jobs) → у кошик (`modify_email` → TRASH){% if gmail.main is defined %}; main — **тільки** трекер, лист залишити (НЕ видаляти, НЕ re-trash навіть після обробки){% endif %}.
+5. `unknown` items: judge yourself (read the email, update the tracker by hand).
+6. Eingangsbestätigungen: `safe_to_trash: true` (jobs) → to the trash (`modify_email` → TRASH){% if gmail.main is defined %}; main: **only** the tracker, leave the email (do NOT delete, do NOT re-trash even after processing){% endif %}.
 
-### Step 6.5: Прострочені follow-ups (авто з трекера)
+### Step 6.5: Overdue follow-ups (auto from the tracker)
 
-Нагадування по заявках, де обіцяний термін відповіді минув.
+Reminders on applications where the promised reply deadline has passed.
 
 ```bash
 js new_app.py --followups --out var/run/followups_YYYY-MM-DD.json
 ```
 
-Виводить `due` (дедлайн «follow-up/тиша до …» минув, статус `sent`, є Msg-ID
-**і** email-канал роботодавця) та `skipped` (з причиною — no silent skip).
-Для кожного `due` елемента: reply у той самий тред через
-`js scripts/gmail_rest.py reply <account> <msg_id> <body_file>` (body з поля
-`body`, `account` зі списку{% if gmail.main is defined %}: `jobs` або `main`{% else %}: у цього клієнта завжди `jobs`{% endif %}). Після відправки — оновити рядок
-трекера: додати `✅ <date> follow-up (Msg <новий_id>)` у Notes (маркер блокує
-повторний follow-up наступного дня). `exit 3` = guard (>12 due) → НЕ слати
-автоматично, винести у degraded-блок звіту. `skipped` з причиною «no Msg-ID»/
-«non-email channel» — портальні/LinkedIn заявки; їх добиває auto-ghost (Step 8),
-follow-up-каналу нема.
+Outputs `due` (the "follow-up/silence until …" deadline has passed, status `sent`, there is a Msg-ID
+**and** an employer email channel) and `skipped` (with a reason: no silent skip).
+For each `due` item: reply in the same thread via
+`js scripts/gmail_rest.py reply <account> <msg_id> <body_file>` (the body from the
+`body` field, `account` from the list{% if gmail.main is defined %}: `jobs` or `main`{% else %}: always `jobs` for this client{% endif %}). After sending, update the
+tracker row: add `✅ <date> follow-up (Msg <new_id>)` to Notes (the marker blocks
+a repeat follow-up the next day). `exit 3` = guard (>12 due) → do NOT send
+automatically, put it into the degraded block of the report. `skipped` with the reason "no Msg-ID"/
+"non-email channel" are portal/LinkedIn applications; auto-ghost (Step 8) finishes them off,
+there is no follow-up channel.
 
-{% if report_mode == 'candidate' %}## Step 7: Співбесіди й усе, що вимагає дії
+{% if report_mode == 'candidate' %}## Step 7: Interviews and everything that requires action
 
-Окремого листа про співбесіду в цьому кроці НЕ слати. Кожен елемент `interviews` зі звіту process-responses (+ виявлені у Step 6.4), а також кожна відповідь роботодавця, на яку кандидатці треба щось зробити (передзвонити, надіслати документи, заповнити анкету, підтвердити термін, дати згоду, відповісти на оферту), іде в лист «Wichtig» (Step 9b). Зібрати для кожного: Firma, Stelle, дата подачі, що сталося, що зробити й до коли, Datum/Uhrzeit/Format/Ort/Dauer, Kontaktperson з телефоном і e-mail, лінк. Лише з тексту листа роботодавця.
+Do NOT send a separate interview email in this step. Every `interviews` item from the process-responses report (+ those found in Step 6.4), and also every employer reply on which the candidate has to do something (call back, send documents, fill in a questionnaire, confirm a date, give consent, respond to an offer), goes into the "Wichtig" email (Step 9b). Collect for each: Firma, Stelle, application date, what happened, what to do and by when, Datum/Uhrzeit/Format/Ort/Dauer, Kontaktperson with phone and e-mail, link. Only from the text of the employer's email.
 
-{% elif operator_mail == 'evening' %}## Step 7: Співбесіди
+{% elif operator_mail == 'evening' %}## Step 7: Interviews
 
-Окремого листа оператору про співбесіду НЕ слати: вночі оператор пошти не отримує. Кожен елемент `interviews` зі звіту process-responses (+ ті, що виявлені у Step 6.4) іде у два місця: у лист кандидатці (Step 9a, зелений блок) і першою секцією у звіт оператору (Step 9b) з Datum/Uhrzeit/Format/Link, Firma, Stelle. Якщо дати немає, так і написати («Einladung ohne festen Termin, Antwort nötig»).
+Do NOT send the operator a separate interview email: the operator receives no mail at night. Every `interviews` item from the process-responses report (+ those found in Step 6.4) goes into two places: the email to the candidate (Step 9a, green block) and the first section of the operator report (Step 9b) with Datum/Uhrzeit/Format/Link, Firma, Stelle. If there is no date, say so ("Einladung ohne festen Termin, Antwort nötig").
 
-{% else %}## Step 7: Пересилання співбесід
+{% else %}## Step 7: Forwarding interviews
 
-Для кожного елемента `interviews` зі звіту process-responses (+ ті, що виявлені у Step 6.4):
+For each `interviews` item from the process-responses report (+ those found in Step 6.4):
 `mcp__gmail__send_email` → **{{ operator_email }}**
 Subject: `[{{ profile.first_name }}: Einladung] [Firma]: Vorstellungsgespräch`
-Body німецькою: Datum/Uhrzeit/Format/Link з листа, Firma, Stelle, рядок трекера. Якщо дати немає, так і написати («Einladung ohne festen Termin, Antwort nötig»).
+Body in German: Datum/Uhrzeit/Format/Link from the email, Firma, Stelle, the tracker row. If there is no date, say so ("Einladung ohne festen Termin, Antwort nötig").
 
 {% endif %}## Step 8: Cleanup
 
-1. Вечірній digest-лист на jobs у кошик (спершу `read_email`, потім `modify_email` → TRASH).
+1. The evening digest email on jobs to the trash (`read_email` first, then `modify_email` → TRASH).
 2. ```bash
    js new_app.py --cleanup
    ```
-   Python сам: переводить у ghosted заявки з тишею 45+ днів, видаляє папки rejected/ghosted/withdrew/skipped (cap 15/запуск), прибирає дублікати Zeugnisse, ротує `var/run` (14д) і логи (30д). Числа для Step 9 брати зі stdout (він компактний: `unmatched` згорнутий до лічильників) або з `var/run/cleanup_YYYY-MM-DD.json` (там повний список unmatched). **Не перезапускати команду**, щоб додивитись обрізаний вивід — читати JSON-файл. Повторний запуск того ж дня дій не дублює, а денний JSON кумулятивний (поле `runs`), тож числа не губляться — але перший запуск лишається канонічним. `errors` непорожній → зазначити у звіті як degraded-нотатку. Вручну папки/`var/run` НЕ чистити.
+   Python itself: moves applications with 45+ days of silence to ghosted, deletes the rejected/ghosted/withdrew/skipped folders (cap 15/run), removes duplicate Zeugnisse, rotates `var/run` (14d) and the logs (30d). Take the numbers for Step 9 from stdout (it is compact: `unmatched` is collapsed to counters) or from `var/run/cleanup_YYYY-MM-DD.json` (the full unmatched list is there). **Do not rerun the command** to see truncated output; read the JSON file. A repeat run on the same day does not duplicate actions, and the daily JSON is cumulative (the `runs` field), so the numbers are not lost, but the first run remains canonical. `errors` non-empty → note it in the report as a degraded note. Do NOT clean folders/`var/run` by hand.
 
-## Step 9: Звіти
+## Step 9: Reports
 
-{% if report_mode == 'candidate' %}Режим звітів `candidate`. Листів два, третій пише обгортка:
-- **9a. Vollbericht** кандидатці: усе нове з минулого звіту, зрозуміло й без технічних слів;
-- **9b. «Wichtig»** кандидатці й оператору (копія): лише те, на що треба відреагувати;
-- **9c. «Zu tun»** оператору: агент лише пише файл, лист складає й шле обгортка.
-Мова всієї пошти німецька, тон на «du» до кандидатки, коротко, по-людськи, без канцеляриту, без тире як сполучника. Нічого не слати й `--mark-reported` не запускати у `APPLY_MODE=dry-run` (там лише описати у stdout, що пішло б) і в клієнта зі статусом `paused`.
+{% if report_mode == 'candidate' %}Report mode `candidate`. There are two emails; the third is written by the wrapper:
+- **9a. Vollbericht** to the candidate: everything new since the last report, clear and without technical words;
+- **9b. "Wichtig"** to the candidate and the operator (copy): only what needs a reaction;
+- **9c. "Zu tun"** to the operator: the agent only writes a file, the wrapper composes and sends the email.
+The language of all mail is German, "du" tone towards the candidate, short, human, no officialese, no dashes as connectors. Send nothing and do not run `--mark-reported` in `APPLY_MODE=dry-run` (there only describe in stdout what would have gone out) and for a client with status `paused`.
 
 ### 9a. Vollbericht an die Kandidatin
 
-Дані не з пам'яті, а з трекера (він уже оновлений кроками 4–6):
+The data not from memory but from the tracker (it is already updated by steps 4–6):
 ```bash
 js scripts/candidate_report.py --json
 ```
-JSON дає нові події з минулого звіту: `submitted` (заявки цього рану **і** ті, що оператор подав уручну вдень), `confirmed`, `rejected`, `interview`, `offer`, плюс `totals`. Поле `note` — текст статусу з трекера, з нього брати деталі (наприклад, «Rückmeldung bis 03.11.»). `new_count == 0` → листа нема, у stdout рядок «Vollbericht: nichts Neues».
+The JSON gives the new events since the last report: `submitted` (the applications of this run **and** those the operator submitted by hand during the day), `confirmed`, `rejected`, `interview`, `offer`, plus `totals`. The `note` field is the status text from the tracker; take the details from it (for example "Rückmeldung bis 03.11."). `new_count == 0` → no email, the line "Vollbericht: nichts Neues" in stdout.
 
-`mcp__gmail__send_email` → **{{ report_email }}** (без `cc` і `bcc`), HTML (`mimeType: "multipart/alternative"`) з plain-text дублем у `body`.
-Subject: `Deine Jobsuche am DD.MM.YYYY: N neue Bewerbungen, M Antworten` (порожню частину опустити; якщо є запрошення, на початку `Einladung von [Firma] · `).
+`mcp__gmail__send_email` → **{{ report_email }}** (without `cc` and `bcc`), HTML (`mimeType: "multipart/alternative"`) with a plain-text copy in `body`.
+Subject: `Deine Jobsuche am DD.MM.YYYY: N neue Bewerbungen, M Antworten` (omit an empty part; if there is an invitation, `Einladung von [Firma] · ` at the start).
 
-Зміст, порожні секції не рендерити:
-1. Рядок чисел: neu beworben (кількість `submitted`), Antworten (`confirmed`+`rejected`+`interview`+`offer`), beworben insgesamt і Gespräche з `totals`.
-2. **Einladungen** (`interview`, `offer`): Firma, Stelle, коли/як одним рядком і «Details in der separaten Mail „Wichtig“». Зеленим, першими.
-3. **Neue Bewerbungen**: картка на заявку: Firma, точна назва позиції, Ort · канал (`per E-Mail`, `über StepStone`, `über XING`, `über die Karriereseite`, `über LinkedIn`, `über Indeed`); два-три речення до 45 слів: що за роль (завдання, години/Teilzeit, якщо вказано у вакансії) і на чому акцент в Anschreiben. Факти лише з вакансії й Anschreiben (`applications/<дата>/<папка>/`); якщо пакета нема (ручна подача без файлів), лише Firma, Stelle, канал.
-4. **Antworten der Firmen**: рядок на кожну відповідь, щоб одразу було видно, звідки вона: значок (✅ Eingangsbestätigung / ⏳ Zwischenbescheid / ❌ Absage), **Firma**, Stelle, «beworben am DD.MM.» і одне коротке речення змісту, якщо в `note` є суть (термін рішення, причина відмови). Відмови подавати спокійно, без драми.
-5. **Gesamtstand** одним рядком: beworben insgesamt, warten auf Antwort, Gespräche, Absagen з `totals`.
+Content, do not render empty sections:
+1. The numbers line: neu beworben (the count of `submitted`), Antworten (`confirmed`+`rejected`+`interview`+`offer`), beworben insgesamt and Gespräche from `totals`.
+2. **Einladungen** (`interview`, `offer`): Firma, Stelle, when/how in one line and "Details in der separaten Mail „Wichtig“". In green, first.
+3. **Neue Bewerbungen**: one card per application: Firma, the exact position title, Ort · channel (`per E-Mail`, `über StepStone`, `über XING`, `über die Karriereseite`, `über LinkedIn`, `über Indeed`); two or three sentences up to 45 words: what the role is (tasks, hours/Teilzeit, if stated in the posting) and what the Anschreiben emphasises. Facts only from the posting and the Anschreiben (`applications/<date>/<folder>/`); if there is no package (a manual application without files), only Firma, Stelle, channel.
+4. **Antworten der Firmen**: one line per reply, so that it is immediately visible where it comes from: an icon (✅ Eingangsbestätigung / ⏳ Zwischenbescheid / ❌ Absage), **Firma**, Stelle, "beworben am DD.MM." and one short sentence of content if `note` has the gist (decision deadline, reason for the rejection). Present rejections calmly, without drama.
+5. **Gesamtstand** in one line: beworben insgesamt, warten auf Antwort, Gespräche, Absagen from `totals`.
 
-Чого в цьому листі НЕ буває: ручних списків, лінків «подати вручну», скріншотів, шляхів до файлів, Msg-ID, слів про бота, сесії, помилки, dry-run. Наприкінці: «Antworten der Firmen kommen in dein Bewerbungs-Postfach {{ send_address }}. Wenn du etwas tun musst, bekommst du eine eigene Mail „Wichtig“.» Підпис: `Viele Grüße` і нижче `Deine Jobsuche`.
+What is NEVER in this email: manual lists, "apply by hand" links, screenshots, file paths, Msg-IDs, words about the bot, sessions, errors, dry-run. At the end: "Antworten der Firmen kommen in dein Bewerbungs-Postfach {{ send_address }}. Wenn du etwas tun musst, bekommst du eine eigene Mail „Wichtig“." Signature: `Viele Grüße` and below it `Deine Jobsuche`.
 
 ```html
 <div style="max-width:600px;margin:0 auto;font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;color:#1f2328;font-size:14px;line-height:1.5;">
@@ -211,7 +224,7 @@ Subject: `Deine Jobsuche am DD.MM.YYYY: N neue Bewerbungen, M Antworten` (пор
   </tr></table>
   <div style="border:1px solid #d1d9e0;border-top:0;border-radius:0 0 8px 8px;padding:14px 18px;">
     <p style="margin:0 0 10px;">Hallo {{ profile.first_name }},</p>
-    <!-- Einladungen: лише якщо є -->
+    <!-- Einladungen: only if there are any -->
     <div style="border-left:4px solid #1a7f37;background:#f0fff4;border-radius:6px;padding:10px 14px;margin:0 0 14px;">
       <div style="font-weight:700;color:#1a7f37;">Einladung: Firma</div>
       <div>Stelle · Vorstellungsgespräch am Mo, 02.11., 11:00 Uhr · Details in der Mail „Wichtig“</div>
@@ -233,22 +246,22 @@ Subject: `Deine Jobsuche am DD.MM.YYYY: N neue Bewerbungen, M Antworten` (пор
 </div>
 ```
 
-Після успішної відправки (і лише тоді): `js scripts/candidate_report.py --mark-reported`. Без цього ті самі події прийдуть у наступному звіті ще раз.
+After a successful send (and only then): `js scripts/candidate_report.py --mark-reported`. Without it the same events will come again in the next report.
 
 ### 9b. «Wichtig» an Kandidatin und Operator
 
-Лише коли в цьому рані з'явилось щось, на що треба відреагувати (Step 7): запрошення, прохання передзвонити, запит документів чи даних, анкета, згода на зберігання даних, оферта, дедлайн. Eingangsbestätigung, Zwischenbescheid без дії й Absage сюди НЕ потрапляють. Кожна річ згадується один раз, у тому рані, коли прийшла.
+Only when something that needs a reaction appeared in this run (Step 7): an invitation, a request to call back, a request for documents or data, a questionnaire, consent to data storage, an offer, a deadline. An Eingangsbestätigung, a Zwischenbescheid without action and an Absage do NOT go here. Each item is mentioned once, in the run in which it arrived.
 
-`mcp__gmail__send_email` → to **{{ report_email }}**, `cc`: **{{ operator_email }}**. Один лист на ран, усі пункти в ньому. HTML з plain-text дублем.
-Subject: один пункт `Wichtig: Einladung von [Firma]` / `Wichtig: [Firma] bittet um Rückruf` / `Wichtig: [Firma] braucht Unterlagen`; кілька `Wichtig: N Dinge zu erledigen ([Firma], [Firma])`.
+`mcp__gmail__send_email` → to **{{ report_email }}**, `cc`: **{{ operator_email }}**. One email per run, all items in it. HTML with a plain-text copy.
+Subject: a single item `Wichtig: Einladung von [Firma]` / `Wichtig: [Firma] bittet um Rückruf` / `Wichtig: [Firma] braucht Unterlagen`; several `Wichtig: N Dinge zu erledigen ([Firma], [Firma])`.
 
-Картка на пункт, усе з листа роботодавця, нічого не домислювати (чого нема, того не писати):
-- що сталося: Firma, Stelle, «beworben am DD.MM.»;
-- **Was du tun solltest** одним-двома реченнями, з терміном («bis Donnerstag zurückrufen»), якщо його названо;
+One card per item, everything from the employer's email, nothing made up (what is not there, do not write):
+- what happened: Firma, Stelle, "beworben am DD.MM.";
+- **Was du tun solltest** in one or two sentences, with the deadline ("bis Donnerstag zurückrufen") if one was named;
 - Termin: Wochentag, Datum, Uhrzeit, Format (Telefon, Video, vor Ort), Adresse, Dauer;
-- Kontakt: Name, Telefon (клікабельний `tel:`), E-Mail;
-- лінк вибору слоту чи анкети, клікабельний, повністю;
-- час в іншій часовій зоні (Cronofy тощо) перерахувати в німецький і написати обидва.
+- Kontakt: Name, Telefon (clickable `tel:`), E-Mail;
+- the slot-selection or questionnaire link, clickable, in full;
+- a time in another time zone (Cronofy etc.): convert it to German time and write both.
 
 ```html
 <div style="max-width:600px;margin:0 auto;font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;color:#1f2328;font-size:14px;line-height:1.5;">
@@ -267,58 +280,58 @@ Subject: один пункт `Wichtig: Einladung von [Firma]` / `Wichtig: [Firma
 </div>
 ```
 
-Якщо відповідати роботодавцю має оператор (наприклад, згода на портальній сторінці), так і написати в картці: «Darum kümmern wir uns.»
+If the operator has to reply to the employer (for example consent on a portal page), say so in the card: "Darum kümmern wir uns."
 
-### 9c. «Zu tun» für den Operator (файл, не лист)
+### 9c. «Zu tun» für den Operator (a file, not an email)
 
-`mcp__gmail__send_email` на {{ operator_email }} у цьому рані НЕ викликати, крім копії 9b. Записати HTML-фрагмент у `var/run/operator_todo_YYYY-MM-DD.html` (якщо файл за сьогодні є, то `operator_todo_YYYY-MM-DD_HHMM.html`). Обгортка після рану сама додасть до нього вечірню нотатку про проблеми (якщо була), алерти й **список ручних подач із трекера** (усі рядки `manual`/`ready` з лінками), і надішле оператору лише якщо є що робити. Тому у фрагмент НЕ дублювати те, що вже стоїть у трекері як `manual`/`ready`, а лише:
-- ручні ліди, яких у трекері нема (`discover_manual_*.json`: Indeed, капча, login-wall) з прямими лінками й підписом Firma/Stelle, де відомо;
-- для ручних подач цього рану, якщо потрібне пояснення: що саме заважає (Konto nötig, Captcha, Formular) і де пакет (`applications/<дата>/<папка>/`);
-- протухлі сесії (рядок зі Step 1.5) і що зробити (re-login);
-- помилки й degraded-нотатки, злив беклогу алертів, unmatched з cleanup, `--check-filter`;
-- один рядок: що пішло кандидатці (Vollbericht так/ні, Wichtig так/ні).
-Німецькою, коротко, інлайн-CSS. Порожнім файл не писати: якщо нічого з переліченого нема, файлу нема.
+Do NOT call `mcp__gmail__send_email` to {{ operator_email }} in this run, apart from the copy of 9b. Write an HTML fragment to `var/run/operator_todo_YYYY-MM-DD.html` (if a file for today exists, then `operator_todo_YYYY-MM-DD_HHMM.html`). After the run the wrapper itself adds to it the evening note about problems (if there was one), the alerts and **the list of manual applications from the tracker** (all `manual`/`ready` rows with links), and sends it to the operator only if there is something to do. So do NOT duplicate in the fragment what already stands in the tracker as `manual`/`ready`, but only:
+- manual leads that are not in the tracker (`discover_manual_*.json`: Indeed, captcha, login-wall) with direct links and a Firma/Stelle label where known;
+- for this run's manual applications, if an explanation is needed: what exactly is in the way (Konto nötig, Captcha, Formular) and where the package is (`applications/<date>/<folder>/`);
+- expired sessions (the line from Step 1.5) and what to do (re-login);
+- errors and degraded notes, the alert backlog drain, unmatched from cleanup, `--check-filter`;
+- one line: what went to the candidate (Vollbericht yes/no, Wichtig yes/no).
+In German, short, inline CSS. Do not write an empty file: if there is nothing from the list, there is no file.
 
-> **⚠️ Відповіді роботодавців — ТІЛЬКИ реальні вхідні листи з `process-responses` (Step 6), у кожного є Msg-ID у пошті.** Екранне підтвердження порталу (join.com «надіслано», StepStone «Schnelle Bewerbung erfolgreich») — це не відповідь і не `confirmed`. **НІКОЛИ не вигадувати Msg-ID: у трекер писати лише ID, реально отриманий через `js scripts/gmail_rest.py get <acc> <id>` (або з `responses_*.json`).**
-{% else %}Листів два, і в них різні читачі. Кандидатка бачить лише те, що вже подано.
-Усе, що вимагає дій (ручні подачі, протухлі сесії, помилки), бачить лише оператор.
-Мова всієї пошти німецька.
+> **⚠️ Employer replies: ONLY real incoming emails from `process-responses` (Step 6), each has a Msg-ID in the mailbox.** An on-screen portal confirmation (join.com "sent", StepStone "Schnelle Bewerbung erfolgreich") is not a reply and not `confirmed`. **NEVER invent a Msg-ID: write into the tracker only an ID actually obtained via `js scripts/gmail_rest.py get <acc> <id>` (or from `responses_*.json`).**
+{% else %}There are two emails, with different readers. The candidate sees only what has already been submitted.
+Everything that requires action (manual applications, expired sessions, errors) is seen only by the operator.
+The language of all mail is German.
 
 {% if report_email %}### 9a. Bericht an die Kandidatin
 
-{% if operator_mail == 'evening' %}`mcp__gmail__send_email` → **{{ report_email }}**. Без `cc` і `bcc`: оператор уночі пошти не отримує, а що саме пішло кандидатці, він бачить з рядка у звіті 9b.
-{% else %}`mcp__gmail__send_email` → **{{ report_email }}**, `bcc`: **{{ operator_email }}** (оператор бачить той самий лист).
+{% if operator_mail == 'evening' %}`mcp__gmail__send_email` → **{{ report_email }}**. Without `cc` and `bcc`: the operator receives no mail at night, and what exactly went to the candidate he sees from the line in report 9b.
+{% else %}`mcp__gmail__send_email` → **{{ report_email }}**, `bcc`: **{{ operator_email }}** (the operator sees the same email).
 {% endif %}
-Слати, коли в цьому рані є хоча б одне з двох: реально подана заявка (email `sent` або портал `submitted`) або нове запрошення від роботодавця (елементи `interviews` зі Step 6 і Step 6.4: Vorstellungsgespräch, Telefoninterview, Probearbeiten). Не слати: у `APPLY_MODE=dry-run`, у клієнта зі статусом `paused`, коли нема ні поданих, ні запрошень. Про пропуск один рядок у звіті оператору (9b).
+Send when this run has at least one of the two: an actually submitted application (email `sent` or portal `submitted`) or a new invitation from an employer (`interviews` items from Step 6 and Step 6.4: Vorstellungsgespräch, Telefoninterview, Probearbeiten). Do not send: in `APPLY_MODE=dry-run`, for a client with status `paused`, when there are neither submissions nor invitations. One line about the skip in the operator report (9b).
 
 Subject:
-- є запрошення: `Einladung von [Firma]` і, якщо є подані, далі ` und N neue Bewerbungen`;
-- лише подані: `Deine Bewerbungen vom DD.MM.YYYY: N verschickt`.
+- there is an invitation: `Einladung von [Firma]` and, if there are submissions, then ` und N neue Bewerbungen`;
+- submissions only: `Deine Bewerbungen vom DD.MM.YYYY: N verschickt`.
 
-**Запрошення стоять першими**, зеленим блоком над заявками, бо на них кандидатка має відповісти сама. Для кожного: Firma, позиція, формат (Telefoninterview, vor Ort, Video), дата й час, якщо вони названі, і що саме їй зробити: обрати слот за лінком з листа (лінк клікабельний, повністю) або відповісти роботодавцю. Тривалість і контактну особу додати, якщо вони є в листі. Якщо дати нема, так і написати: «Termin wählst du selbst über den Link». Запрошення згадується один раз, у тому рані, коли воно прийшло; у наступних листах його не повторювати. Відмови, Eingangsbestätigungen і запити документів сюди не потрапляють.
+**Invitations come first**, as a green block above the applications, because the candidate has to answer them herself. For each: Firma, position, format (Telefoninterview, vor Ort, Video), date and time if they are named, and what exactly she has to do: pick a slot via the link from the email (the link clickable, in full) or reply to the employer. Add the duration and the contact person if they are in the email. If there is no date, say so: "Termin wählst du selbst über den Link". An invitation is mentioned once, in the run in which it arrived; do not repeat it in later emails. Rejections, Eingangsbestätigungen and document requests do not go here.
 
-Далі подані заявки цього рану. Для кожної:
-- Firma і точна назва позиції, як у вакансії;
-- Ort і канал одним словом: `per E-Mail` або `über StepStone` / `über XING` / `Karriereseite`;
-- два-три короткі речення, разом до 45 слів: що це за роль (головні завдання, години або Teilzeit, якщо у вакансії вказано) і на чому зроблено акцент в Anschreiben.
+Then the applications submitted in this run. For each:
+- Firma and the exact position title, as in the posting;
+- Ort and the channel in one word: `per E-Mail` or `über StepStone` / `über XING` / `Karriereseite`;
+- two or three short sentences, up to 45 words in total: what the role is (main tasks, hours or Teilzeit, if stated in the posting) and what the Anschreiben emphasises.
 
-Факти брати лише з тексту вакансії та згенерованого Anschreiben цієї заявки. Нічого не домислювати: якщо години чи зарплата у вакансії не названі, про них не писати.
+Take the facts only from the posting text and the generated Anschreiben of this application. Make nothing up: if hours or salary are not named in the posting, do not write about them.
 
-Чого в цьому листі НЕ буває: manual-списку, лінків «подати вручну», скріншотів, шляхів до файлів, Msg-ID, слів про бота, сесії, помилки чи dry-run, відмов і статистики трекера. Єдині лінки в листі — ті, за якими кандидатка обирає слот співбесіди. Тон: коротко, по-людськи, на «du», без канцеляриту й без тире як сполучника. Підпис: `Viele Grüße` і нижче `Deine Jobsuche`.
+What is NEVER in this email: a manual list, "apply by hand" links, screenshots, file paths, Msg-IDs, words about the bot, sessions, errors or dry-run, rejections and tracker statistics. The only links in the email are those via which the candidate picks an interview slot. Tone: short, human, "du", no officialese and no dashes as connectors. Signature: `Viele Grüße` and below it `Deine Jobsuche`.
 
-Відправляти як HTML (`mimeType: "multipart/alternative"`) з plain-text дублем у `body`:
+Send as HTML (`mimeType: "multipart/alternative"`) with a plain-text copy in `body`:
 
 ```html
 <div style="max-width:600px;margin:0 auto;font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;color:#1f2328;font-size:14px;line-height:1.5;">
   <p style="margin:0 0 6px;">Hallo {{ profile.first_name }},</p>
-  <!-- блок запрошення: лише якщо воно є, по одному на роботодавця, завжди над заявками -->
+  <!-- invitation block: only if there is one, one per employer, always above the applications -->
   <div style="border:1px solid #1a7f37;border-left:4px solid #1a7f37;background:#f0fff4;border-radius:8px;padding:12px 16px;margin:10px 0 16px;">
     <div style="font-weight:700;color:#1a7f37;">Einladung: Firma</div>
     <div>Stellenbezeichnung · Telefoninterview, ca. 30 Minuten</div>
     <div style="font-size:13px;margin-top:6px;">Den Termin wählst du selbst: <a href="URL" style="color:#0969da;">Termin auswählen</a></div>
   </div>
   <p style="margin:0 0 16px;">heute sind N Bewerbungen für dich rausgegangen:</p>
-  <!-- одна картка на заявку -->
+  <!-- one card per application -->
   <div style="border:1px solid #d1d9e0;border-radius:8px;padding:12px 16px;margin-bottom:10px;">
     <div style="font-weight:700;">Firma</div>
     <div>Stellenbezeichnung</div>
@@ -333,23 +346,23 @@ Subject:
 ### 9b. Bericht an den Operator
 {% else %}### Bericht an den Operator
 
-У цього клієнта `report_email` порожній: листа кандидатці нема, є лише звіт оператору.
+This client's `report_email` is empty: there is no email to the candidate, only the operator report.
 {% endif %}
-{% if operator_mail == 'evening' %}Цей звіт НЕ надсилається листом. Записати готовий HTML у файл `var/run/operator_report_YYYY-MM-DD.html` (якщо файл за сьогодні вже є, то `operator_report_YYYY-MM-DD_HHMM.html`). Обгортка після вечірнього рану вклеїть його в один зведений лист оператору. `mcp__gmail__send_email` на {{ operator_email }} у цьому рані не викликати взагалі.
+{% if operator_mail == 'evening' %}This report is NOT sent as an email. Write the finished HTML to the file `var/run/operator_report_YYYY-MM-DD.html` (if a file for today already exists, then `operator_report_YYYY-MM-DD_HHMM.html`). After the evening run the wrapper pastes it into one consolidated email to the operator. Do not call `mcp__gmail__send_email` to {{ operator_email }} in this run at all.
 
-У файл іде лише вміст звіту за шаблоном нижче, починаючи з рядка метрик: зовнішній `<div>` із зеленим хедером і футер не потрібні, їх дає зведений лист. Увесь звіт німецькою; у dry-run перший рядок «DRY-RUN». Якщо кандидатці пішов лист (9a), один рядок про це: скільки заявок і чи було запрошення.
-{% else %}`mcp__gmail__send_email` → **{{ operator_email }}** (тільки оператору, кандидатці цей лист не йде)
-Subject: `[{{ profile.first_name }}: Morgenbericht] YYYY-MM-DD: N Bewerbungen (E-Mail X, Portal Y)`. Увесь звіт німецькою; у dry-run у темі «DRY-RUN».
+Only the report content following the template below goes into the file, starting with the metrics row: the outer `<div>` with the green header and the footer are not needed, the consolidated email provides them. The whole report in German; in dry-run the first line is "DRY-RUN". If an email went to the candidate (9a), one line about it: how many applications and whether there was an invitation.
+{% else %}`mcp__gmail__send_email` → **{{ operator_email }}** (to the operator only; this email does not go to the candidate)
+Subject: `[{{ profile.first_name }}: Morgenbericht] YYYY-MM-DD: N Bewerbungen (E-Mail X, Portal Y)`. The whole report in German; in dry-run "DRY-RUN" in the subject.
 
-Відправляти як **HTML**: `mimeType: "multipart/alternative"`, `htmlBody` за шаблоном нижче, `body` — стислий plain-text дубль (фолбек).
+Send as **HTML**: `mimeType: "multipart/alternative"`, `htmlBody` following the template below, `body` a brief plain-text copy (fallback).
 {% endif %}
-Зміст (у цьому порядку): (1) подані email-заявки; (2) портальні submitted зі шляхами скріншотів; (3) **manual-список** (LinkedIn/ATS/`login_required`/`captcha`/`form_unsupported` + `discover_manual_*.json` — blocked/unknown лінки, напр. Indeed) з прямими лінками; (4) відповіді rejected/confirmed/interview; (5) співбесіди (дубль Step 7); (6) **cleanup-блок** зі звіту Step 8: авто-ghosted N, видалено папок M, ротовано файлів; `unmatched`/`errors` — жовтим блоком, лише якщо непорожні; (6.5) **рядок «сесії»** зі Step 1.5: `St ✅ / XING ✅ / LI ✅` (протухлі — червоним + рядок про потрібний re-login); (7) помилки/degraded-нотатки + **♻️ якщо відновлено листи з main-trash (Step 6.2) — рядок «відновлено N видалених відповідей» з переліком компаній**.
+Content (in this order): (1) the submitted email applications; (2) the portal submitted ones with the screenshot paths; (3) the **manual list** (LinkedIn/ATS/`login_required`/`captcha`/`form_unsupported` + `discover_manual_*.json`: blocked/unknown links, e.g. Indeed) with direct links; (4) replies rejected/confirmed/interview; (5) interviews (duplicate of Step 7); (6) the **cleanup block** from the Step 8 report: auto-ghosted N, folders deleted M, files rotated; `unmatched`/`errors` as a yellow block, only if non-empty; (6.5) the **"sessions" line** from Step 1.5: `St ✅ / XING ✅ / LI ✅` (expired ones in red + a line about the needed re-login); (7) errors/degraded notes + **♻️ if emails were restored from main-trash (Step 6.2): the line "restored N deleted replies" with the list of companies**.
 
-> **⚠️ Секція (4) «відповіді» — ТІЛЬКИ реальні вхідні листи роботодавців з `process-responses` (Step 6), у кожного має бути Msg-ID у пошті (jobs або main).** Портальне/on-submit підтвердження подачі (join.com «надіслано», StepStone «Schnelle Bewerbung erfolgreich», ATS «Vielen Dank für Ihre Bewerbung» на екрані) — це НЕ відповідь: воно йде в секцію (2) «портальні submitted», не в (4), і **не** рахується в лічильник «відповідей». `confirmed` у (4) = отримано окремий email Eingangsbestätigung. Якщо листа нема — статус лишається `portal_submitted`, не `confirmed`. **НІКОЛИ не вигадувати Msg-ID: цитувати в трекері лише ID, реально отриманий через `js scripts/gmail_rest.py get <acc> <id>` (або з `responses_*.json`). Msg-ID, якого нема в пошті = фабрикація, гірша за пропуск.**
+> **⚠️ Section (4) "replies": ONLY real incoming employer emails from `process-responses` (Step 6), each must have a Msg-ID in the mailbox (jobs or main).** A portal/on-submit confirmation of the application (join.com "sent", StepStone "Schnelle Bewerbung erfolgreich", an ATS "Vielen Dank für Ihre Bewerbung" on screen) is NOT a reply: it goes into section (2) "portal submitted", not (4), and does **not** count towards the "replies" counter. `confirmed` in (4) = a separate Eingangsbestätigung email was received. If there is no email, the status stays `portal_submitted`, not `confirmed`. **NEVER invent a Msg-ID: quote in the tracker only an ID actually obtained via `js scripts/gmail_rest.py get <acc> <id>` (or from `responses_*.json`). A Msg-ID that is not in the mailbox = fabrication, worse than an omission.**
 
-### HTML-шаблон
+### HTML template
 
-Правила: інлайн-CSS тільки (Gmail ріже `<style>`), таблиці для розкладки, максимум 640px. Порожні секції не рендерити взагалі. Лінки — клікабельні `<a>` з повною URL. Секцію співбесід (якщо є) ставити ПЕРШОЮ і виділяти зеленим. Помилки — жовтим блоком у кінці.
+Rules: inline CSS only (Gmail strips `<style>`), tables for layout, maximum 640px. Do not render empty sections at all. Links as clickable `<a>` with the full URL. Put the interviews section (if any) FIRST and highlight it in green. Errors as a yellow block at the end.
 
 ```html
 <div style="max-width:640px;margin:0 auto;font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;color:#1f2328;">
@@ -357,7 +370,7 @@ Subject: `[{{ profile.first_name }}: Morgenbericht] YYYY-MM-DD: N Bewerbungen (E
     <div style="font-size:18px;font-weight:700;">Morgenbericht DD.MM.YYYY</div>
     <div style="font-size:13px;opacity:.85;margin-top:2px;">Automatische Jobsuche · {{ full_name }}</div>
   </div>
-  <!-- рядок метрик: подано / manual / відповіді / співбесіди -->
+  <!-- metrics row: submitted / manual / replies / interviews -->
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #d1d9e0;border-top:0;text-align:center;">
     <tr>
       <td style="padding:12px 4px;"><div style="font-size:22px;font-weight:700;">N</div><div style="font-size:12px;color:#59636e;">beworben</div></td>
@@ -366,20 +379,20 @@ Subject: `[{{ profile.first_name }}: Morgenbericht] YYYY-MM-DD: N Bewerbungen (E
       <td style="padding:12px 4px;border-left:1px solid #d1d9e0;"><div style="font-size:22px;font-weight:700;color:#1a7f37;">N</div><div style="font-size:12px;color:#59636e;">Gespräche</div></td>
     </tr>
   </table>
-  <!-- секція (повторюваний блок): заголовок + вміст -->
+  <!-- section (repeatable block): heading + content -->
   <div style="border:1px solid #d1d9e0;border-top:0;padding:14px 20px;">
     <div style="font-size:14px;font-weight:700;margin-bottom:8px;">📤 Automatisch beworben</div>
-    <!-- один рядок на заявку: -->
+    <!-- one row per application: -->
     <div style="padding:6px 0;border-top:1px solid #f0f3f6;font-size:13px;">
       <span style="font-weight:600;">Firma</span>: Rolle
       <span style="background:#ddf4ff;color:#0969da;border-radius:10px;padding:1px 8px;font-size:11px;margin-left:6px;">email</span>
       <!-- portal: background:#fbefff;color:#8250df · manual: background:#fff8c5;color:#9a6700 -->
     </div>
   </div>
-  <!-- manual-список: той самий блок, кожен рядок додатково з <a href="URL" style="color:#0969da;">bewerben</a> -->
-  <!-- відповіді: 🟢 interview / 🔵 confirmed / 🔴 rejected на початку рядка -->
-  <!-- співбесіди (якщо є) — блок з style="border-left:4px solid #1a7f37;background:#f0fff4;" -->
-  <!-- помилки/degraded (якщо є) — блок з style="border-left:4px solid #d4a72c;background:#fff8c5;" -->
+  <!-- manual list: the same block, each row additionally with <a href="URL" style="color:#0969da;">bewerben</a> -->
+  <!-- replies: 🟢 interview / 🔵 confirmed / 🔴 rejected at the start of the row -->
+  <!-- interviews (if any): a block with style="border-left:4px solid #1a7f37;background:#f0fff4;" -->
+  <!-- errors/degraded (if any): a block with style="border-left:4px solid #d4a72c;background:#fff8c5;" -->
   <div style="border:1px solid #d1d9e0;border-top:0;border-radius:0 0 8px 8px;padding:10px 20px;font-size:11px;color:#59636e;">
     Morgenlauf · git push ✓ · vollständiges Log: var/logs/morning_YYYY-MM-DD.log auf dem Server
   </div>
@@ -393,17 +406,17 @@ git add -A tracker.md applications/
 git commit -m "{{ slug }}: morning run YYYY-MM-DD — N applications, M responses"
 git pull --rebase && git push
 ```
-Згенеровані PDF/DOCX у git не йдуть (`.gitignore` репозиторію даних): пакет відтворюється з `generate.py`. Комітяться `generate.py`, `email_draft.json`, `apply_result.json`, скріншоти підтвердження і трекер.
-(`-A` обов'язково — cleanup видаляє папки, видалення теж мають потрапити в коміт.)
-Наприкінці stdout: `MORNING OK: email=X portal=Y manual=Z responses=R interviews=I`.
+The generated PDF/DOCX do not go into git (the data repository's `.gitignore`): the package is reproduced from `generate.py`. Committed are `generate.py`, `email_draft.json`, `apply_result.json`, the confirmation screenshots and the tracker.
+(`-A` is mandatory: cleanup deletes folders, and the deletions must also get into the commit.)
+At the end of stdout: `MORNING OK: email=X portal=Y manual=Z responses=R interviews=I`.
 
-## Step Z: Метрика обсягу алертів (тренд)
+## Step Z: Alert volume metric (trend)
 
 ```bash
 js scripts/alert_volume.py --days 1 --json > var/run/alert_volume_$(date +%F).json
 js scripts/alert_volume.py --check-filter || echo "УВАГА: Gmail-фільтр job-alerts втратив відправника"
 ```
-Один рядок у звіт: скільки алертів за добу і з яких джерел. Якщо `--check-filter`
-дав ненульовий код — назвати відправника, що випав, це означає, що лейбл
-`Job Alerts` знову протікає в інбокс.
+One line in the report: how many alerts in the last day and from which sources. If `--check-filter`
+returned a non-zero code, name the sender that dropped out; it means the
+`Job Alerts` label is leaking into the inbox again.
 

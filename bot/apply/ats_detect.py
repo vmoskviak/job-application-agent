@@ -36,6 +36,11 @@ SUBMIT_TEXTS = (
     "submit",
     "apply",
     "bewerbung absenden",
+    "bewerbung abschicken",
+    "bewerbung senden",
+    "jetzt bewerben",
+    "absenden",
+    "abschicken",
     "bewerben",
     "send application",
 )

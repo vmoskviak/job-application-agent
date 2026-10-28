@@ -1,9 +1,9 @@
-# Фільтри відбору: пороги, виключені назви ролей (regex), досяжні локації.
+# Selection filters: thresholds, excluded role titles (regex), reachable locations.
 min_score: 25
 max_submissions_per_run: 25
 cleanup_min_tracker_rows: 0
-# Етап 2d: вимикачі платформ з логіном (on | shadow | off) і ліміти подач.
-# targeting.yaml це оголошений стан; /platform on не піднімає оголошені off і shadow.
+# Phase 2d: switches for platforms with login (on | shadow | off) and submission limits.
+# targeting.yaml is the declared state; /platform on does not raise platforms declared off or shadow.
 platforms: {linkedin: off, freelancermap: off, gulp: off}
 daily_limits: {email: 5, form: 5, linkedin: 5, freelancermap: 2, gulp: 3}
 excluded_title_patterns:

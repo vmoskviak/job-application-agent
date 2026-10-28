@@ -1,125 +1,133 @@
-# Як завести нового клієнта
+# How to onboard a new client
 
-Від «є людина, якій треба робота» до щоденних автоматичних подач. Частину
-робить оператор руками (доступи), частину Claude (конфіг з документів).
+From "there is a person who needs a job" to daily automatic applications. Part
+of it the operator does by hand (access), part is done by Claude (config from
+documents).
 
-## 0. Що потрібно від людини
+## 0. What to ask the person for
 
-Попросити одним повідомленням, скласти в `clients/<slug>/inbox/`:
+Ask in one message, put everything into `clients/<slug>/inbox/`:
 
-- актуальне резюме в будь-якому форматі, краще кілька версій, якщо є;
-- Arbeitszeugnisse, дипломи, сертифікати (мовні теж), визнання дипломів;
-- фото для CV;
-- у вільній формі: які ролі хоче, які точно ні, місто й радіус, чи підходить
-  remote, зарплата, коли може почати, повна чи часткова зайнятість;
-- громадянство або тип дозволу на роботу, водійські права;
-- що з її досвіду не можна прикрашати (рівень мови, титули, незакінчене навчання).
+- a current CV in any format, better several versions if they exist;
+- Arbeitszeugnisse, diplomas, certificates (language ones too), recognition of diplomas;
+- a photo for the CV;
+- in free form: which roles they want, which definitely not, city and radius,
+  whether remote is fine, salary, when they can start, full-time or part-time;
+- citizenship or type of work permit, driving licence;
+- what in their experience must not be embellished (language level, titles,
+  unfinished studies).
 
-І доступи:
+And access:
 
-- **окрема поштова скринька під пошук** (`imja.prizvyshche.jobs@gmail.com`),
-  створює сама або оператор разом із нею;
-- доступ до особистої скриньки, яка стоїть у CV: туди відповідають роботодавці;
-- акаунти StepStone, XING, LinkedIn (існуючі або нові на jobs-пошту).
+- **a separate mailbox for the job search** (`imja.prizvyshche.jobs@gmail.com`),
+  created by the person or by the operator together with them;
+- access to the personal mailbox listed in the CV: employers reply there;
+- StepStone, XING, LinkedIn accounts (existing ones or new ones on the jobs mailbox).
 
-Людина має розуміти й погодитись: заявки йдуть від її імені без її перегляду,
-агент читає обидві скриньки, на співбесіди ходить вона сама.
+The person must understand and agree: applications go out in their name
+without their review, the agent reads both mailboxes, interviews they attend
+themselves.
 
-## 1. Скелет
+## 1. Skeleton
 
 ```bash
 export JOBSEARCH_CLIENTS_DIR=~/Projects/jobsearch-clients/clients
-python -m bot.onboard init <slug>      # slug: малі латинські літери, напр. anna-k
+python -m bot.onboard init <slug>      # slug: lowercase latin letters, e.g. anna-k
 ```
 
-З'являється `clients/<slug>/` зі шаблонами YAML і `status: paused`.
+`clients/<slug>/` appears with YAML templates and `status: paused`.
 
-## 2. Конфіг із документів (Claude)
+## 2. Config from documents (Claude)
 
-Відкрити Claude Code у `jobsearch-clients/clients/<slug>/` і попросити
-заповнити конфіг з `inbox/`. Порядок і правила:
+Open Claude Code in `jobsearch-clients/clients/<slug>/` and ask it to fill the
+config from `inbox/`. Order and rules:
 
-1. **`profile.yaml`**: контакти з резюме. Чого нема, спитати, не вигадувати.
-   `report_email` — особиста скринька людини (зазвичай та, що в її резюме):
-   туди після кожного рану з поданими заявками йде короткий звіт німецькою,
-   копія оператору. Ручні подачі й помилки бачить лише оператор.
-2. **`candidate_brief.md`**: вільний текст. Що людина реально робила, чого
-   хоче, що заборонено стверджувати. Це головне джерело для листів.
-3. **`cv.yaml`**: досвід, освіта, скіли. Почати з одного варіанта `standard`.
-   Другий варіант додавати, коли треки настільки різні, що той самий досвід
-   треба описати іншими словами (напр. `buero` і `sachbearbeitung`). Кожен
-   буліт має спиратися на резюме або Zeugnis.
-4. **`attachments/`**: PDF з іменами `01_Zeugnis_Firma_2025.pdf`, по одному на
-   документ, прописати в `cv.yaml → attachments` з підписами для блоку
-   «Anlagen». Двом найсвіжішим Zeugnisse поставити `portal: true`.
-5. **`tracks.yaml`**: 3–6 треків. Трек = група назв ролей з одним варіантом CV.
-   Ключові слова брати з реальних оголошень, стемами (`Dolmetsch`, а не
-   `Dolmetscherin`). Ролі, які схожі за словами, але не підходять, завести
-   окремим треком з `excluded: true`.
-6. **`targeting.yaml`**: міста в радіусі, усі написання (з умлаутами, без
-   них, англійська назва землі). Виключення за назвою ролі. Умови, яких у
-   назві не буває (Teilzeit, Homeoffice), задаються по тексту вакансії:
-   `description_bonus` піднімає такі вакансії в черзі, а
-   `excluded_description_patterns` з `unless` відсіює, напр. Vollzeit без
-   згадки Teilzeit.
-7. **`search.yaml`**: 2–4 запити на активний трек, по одному з
-   `site:linkedin.com/jobs` і `site:xing.com/jobs`. Кар'єрні сторінки великих
-   роботодавців міста.
-8. **`accounts.yaml`**: адреси обох скриньок. Рушій працює лише з Gmail.
-   Якщо особиста скринька людини не на Gmail, блок `main` прибрати, а в
-   `profile.yaml → email` поставити jobs-адресу: відповіді роботодавців
-   підуть туди, і рушій їх там читає. Стару jobs-пошту на іншому провайдері
-   (GMX тощо) не переносити, досить пересилання на Gmail.
-9. **`CLAUDE.md`** у папці клієнта, якщо є правила саме цієї людини (напр.
-   «у формах громадянство писати так», «на цю компанію не подаватись»).
+1. **`profile.yaml`**: contacts from the CV. Whatever is missing, ask, do not
+   invent. `report_email` is the person's personal mailbox (usually the one in
+   their CV): after every run with submitted applications a short report in
+   German goes there, with a copy to the operator. Manual submissions and
+   errors are seen by the operator only.
+2. **`candidate_brief.md`**: free text. What the person actually did, what they
+   want, what must not be claimed. This is the main source for the letters.
+3. **`cv.yaml`**: experience, education, skills. Start with a single variant
+   `standard`. Add a second variant when the tracks are so different that the
+   same experience has to be described in other words (e.g. `buero` and
+   `sachbearbeitung`). Every bullet must be backed by the CV or a Zeugnis.
+4. **`attachments/`**: PDFs named like `01_Zeugnis_Firma_2025.pdf`, one per
+   document, listed in `cv.yaml → attachments` with captions for the
+   "Anlagen" block. Set `portal: true` on the two most recent Zeugnisse.
+5. **`tracks.yaml`**: 3–6 tracks. A track is a group of role titles with one CV
+   variant. Take keywords from real job ads, as stems (`Dolmetsch`, not
+   `Dolmetscherin`). Roles that look similar by wording but do not fit go into
+   a separate track with `excluded: true`.
+6. **`targeting.yaml`**: cities within the radius, all spellings (with umlauts,
+   without them, the English name of the state). Exclusions by role title.
+   Conditions that never appear in the title (Teilzeit, Homeoffice) are set on
+   the job text: `description_bonus` moves such jobs up the queue, and
+   `excluded_description_patterns` with `unless` drops e.g. Vollzeit without a
+   mention of Teilzeit.
+7. **`search.yaml`**: 2–4 queries per active track, one each with
+   `site:linkedin.com/jobs` and `site:xing.com/jobs`. Career pages of the
+   city's large employers.
+8. **`accounts.yaml`**: addresses of both mailboxes. The engine works with Gmail
+   only. If the person's personal mailbox is not on Gmail, remove the `main`
+   block and put the jobs address into `profile.yaml → email`: employer
+   replies will go there, and the engine reads them there. An old jobs mailbox
+   on another provider (GMX etc.) is not migrated, forwarding to Gmail is
+   enough.
+9. **`CLAUDE.md`** in the client folder, if there are rules specific to this
+   person (e.g. "in forms, write citizenship like this", "do not apply to this
+   company").
 
-Перевірка:
+Check:
 
 ```bash
 js -m bot.onboard check --client <slug> --render
 ```
 
-Помилок має бути нуль. `--render` кладе пробний пакет на кожен варіант CV у
-`var/run/onboarding_sample/`: відкрити PDF, показати людині, виправити
-формулювання до старту.
+There must be zero errors. `--render` puts a sample package for every CV
+variant into `var/run/onboarding_sample/`: open the PDF, show it to the person,
+fix the wording before the start.
 
-## 3. Доступи на сервері (оператор)
+## 3. Access on the server (operator)
 
-Токени й сесії існують лише на сервері, у git вони не потрапляють.
+Tokens and sessions exist only on the server, they never get into git.
 
-1. **Gmail OAuth** для обох скриньок: `docs/server_setup.md` §Gmail. Каталоги
-   мають збігатися з `creds_dir` в `accounts.yaml`.
-2. **Браузерний профіль**: логін у StepStone, XING, LinkedIn по VNC,
-   `docs/server_setup.md` §Re-login. Профіль називається як `playwright_profile`.
-3. **Job-алерти** на порталах на jobs-скриньку за назвами ролей із треків.
-   У Gmail jobs-акаунта завести лейбл `Job Alerts` і фільтр за відправниками.
-4. Перевірка: `js -m bot.onboard check --client <slug>` без попереджень про
-   OAuth і профіль, `js scripts/session_health.py --json` показує `live`.
+1. **Gmail OAuth** for both mailboxes: `docs/server_setup.md` §Gmail. The
+   directories must match `creds_dir` in `accounts.yaml`.
+2. **Browser profile**: log in to StepStone, XING, LinkedIn over VNC,
+   `docs/server_setup.md` §Re-login. The profile is named like `playwright_profile`.
+3. **Job alerts** on the portals to the jobs mailbox, by the role titles from
+   the tracks. In the jobs Gmail account create the label `Job Alerts` and a
+   filter by senders.
+4. Check: `js -m bot.onboard check --client <slug>` without warnings about
+   OAuth and the profile, `js scripts/session_health.py --json` shows `live`.
 
-## 4. Репетиція
+## 4. Rehearsal
 
 ```bash
-# на сервері, статус ще paused, тому cron клієнта не чіпає
+# on the server, status still paused, so cron leaves the client alone
 scripts/server/run_agent.sh <slug> evening
 APPLY_MODE=dry-run scripts/server/run_agent.sh <slug> morning
 ```
 
-Вечірній ран шле дайджест на jobs-скриньку. Ранковий у dry-run створює
-чернетки листів замість відправки і проходить портальні форми до кнопки
-«Absenden». Переглянути: чи ті вакансії, чи листи звучать як людина, чи не
-пролізло зайве. Поправити треки й бриф, повторити.
+The evening run sends a digest to the jobs mailbox. The morning run in dry-run
+creates draft emails instead of sending them and walks the portal forms up to
+the "Absenden" button. Review: are these the right jobs, do the letters sound
+like a human, did anything unwanted slip through. Adjust the tracks and the
+brief, repeat.
 
-## 5. Запуск
+## 5. Launch
 
-`status: active` у `profile.yaml`, коміт, пуш. Наступний cron підхопить.
-Перший тиждень читати ранкові звіти уважно: фільтри майже завжди потребують
-одного-двох доналаштувань.
+`status: active` in `profile.yaml`, commit, push. The next cron picks it up.
+Read the morning reports carefully during the first week: the filters almost
+always need one or two adjustments.
 
-## Пауза й завершення
+## Pause and finish
 
-- Пауза: `status: paused`. Дані лишаються, cron пропускає.
-- Знайшла роботу: `status: placed`, вимкнути job-алерти на порталах.
-- Повне видалення на прохання людини: видалити папку, прибрати з історії
-  (`git filter-repo --path clients/<slug> --invert-paths`, force-push), на
-  сервері стерти `~/.gmail-mcp/<slug>-*` і `~/.playwright-mcp/<slug>`,
-  відкликати OAuth-доступ у налаштуваннях Google-акаунта.
+- Pause: `status: paused`. Data stays, cron skips.
+- Found a job: `status: placed`, switch off the job alerts on the portals.
+- Full deletion at the person's request: delete the folder, remove it from the
+  history (`git filter-repo --path clients/<slug> --invert-paths`, force-push),
+  on the server wipe `~/.gmail-mcp/<slug>-*` and `~/.playwright-mcp/<slug>`,
+  revoke the OAuth access in the Google account settings.

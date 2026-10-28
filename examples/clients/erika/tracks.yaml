@@ -1,5 +1,5 @@
-# Треки пошуку: ключові слова для скорингу, варіант CV, пріоритет (менше = важливіше),
-# excluded: true — на трек не подаємось, letter — блоки Anschreiben для tailoring.
+# Search tracks: keywords for scoring, CV variant, priority (lower = more important),
+# excluded: true: never apply on this track, letter: Anschreiben blocks for tailoring.
 default_priority: 7
 tracks:
   B1_hausverwaltung:

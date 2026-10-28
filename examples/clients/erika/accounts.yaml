@@ -1,15 +1,15 @@
-# Поштові акаунти й браузерний профіль. Токени тут НЕ лежать: лише назви
-# каталогів у ~/.gmail-mcp і ~/.playwright-mcp на машині запуску.
+# Mail accounts and browser profile. Tokens are NOT stored here: only the
+# names of the directories under ~/.gmail-mcp and ~/.playwright-mcp on the run machine.
 gmail:
   jobs:
     address: erika.mustermann.jobs@example.com
     creds_dir: erika-jobs
-    role: Відправка заявок, job-alerts
+    role: Sending applications, job alerts
     may_delete: true
   main:
     address: erika.mustermann@example.com
     creds_dir: erika-main
-    role: Читання + відповіді роботодавцям у thread
+    role: Reading + replies to employers in the thread
     may_delete: false
     rescue_trash: false
 send_from: jobs

@@ -1,4 +1,4 @@
-# CV зовнішнє: готові PDF лежать у attachments/ (фаза 2 їх перевіряє).
+# External CV: ready PDFs live in attachments/ (phase 2 checks them).
 source: external
 variants: [android, ai]
 default_variant: android

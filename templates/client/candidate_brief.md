@@ -1,18 +1,18 @@
-# __SLUG__: бриф для tailoring
+# __SLUG__: brief for tailoring
 
-Агент читає цей файл перед кожним Anschreiben і профілем CV.
+The agent reads this file before every Anschreiben and CV profile.
 
-## Профіль
+## Profile
 
-<!-- Досвід по роках: де, ким, що реально робила, цифри. Освіта. Мови з
-рівнями й сертифікатами. Дозвіл на роботу / громадянство. Коли може почати,
-повна чи часткова зайнятість, готовність до поїздок, водійські права. -->
+<!-- Experience by year: where, in which role, what she actually did, numbers.
+Education. Languages with levels and certificates. Work permit / citizenship.
+Earliest start date, full-time or part-time, willingness to travel, driving licence. -->
 
-## Чого хоче
+## What she wants
 
-<!-- Які ролі, які точно ні, зарплата, місто й радіус, remote. -->
+<!-- Which roles, which definitely not, salary, city and radius, remote. -->
 
-## Правила
+## Rules
 
-<!-- Що можна стверджувати, що ні (рівень мови, сертифікати, титули).
-Заборонені фрази. Тон листів. Структура Anschreiben. -->
+<!-- What may be claimed and what may not (language level, certificates, titles).
+Forbidden phrases. Tone of the letters. Structure of the Anschreiben. -->

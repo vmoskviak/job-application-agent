@@ -11,10 +11,10 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
-      # weasyprint (рендер CV у PDF) імпортується тестами й потребує pango
+      # weasyprint (CV rendering to PDF) is imported by the tests and needs pango
       - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libpango-1.0-0 libpangoft2-1.0-0 libharfbuzz0b
       - run: pip install -r requirements.txt
-      # Браузерні тести (маркер browser) самі пропускаються без JOBSEARCH_BROWSER_TESTS=1
+      # Browser tests (marker browser) skip themselves without JOBSEARCH_BROWSER_TESTS=1
       - run: python -m pytest -q
-      # Без папки клієнтів лишається структурна перевірка: чужі email і телефони
+      # Without a clients folder only the structural check remains: foreign emails and phone numbers
       - run: python scripts/check_no_private_data.py --strict

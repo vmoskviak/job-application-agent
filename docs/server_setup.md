@@ -1,18 +1,18 @@
-# Сервер: встановлення й runbook
+# Server: install and runbook
 
-Розраховано на Debian 13 у LXC-контейнері (4 vCPU, 8 GB RAM, 32 GB диск),
-усе під root. Часовий пояс `Europe/Berlin`.
+Written for Debian 13 in an LXC container (4 vCPU, 8 GB RAM, 32 GB disk),
+everything as root. Time zone `Europe/Berlin`.
 
-## Встановлення
+## Install
 
-Коротка англійська версія для стороннього користувача: `docs/quickstart.md`;
-`scripts/server/install.sh` робить пакети, venv, Playwright, Claude Code і юніти.
+Short English version for an outside user: `docs/quickstart.md`;
+`scripts/server/install.sh` does packages, venv, Playwright, Claude Code and units.
 
 ```bash
 apt install git curl gnupg jq locales cron rsync openssh-server \
   fonts-dejavu fonts-liberation2 libpango-1.0-0 libpangocairo-1.0-0 libcairo2 \
   libgdk-pixbuf-2.0-0 libffi-dev python3 python3-venv python3-pip xvfb x11vnc
-# Node 22 (NodeSource), потім:
+# Node 22 (NodeSource), then:
 npm install -g @anthropic-ai/claude-code
 
 git clone git@github.com:<user>/jobsearch-autopilot.git /opt/jobsearch-autopilot
@@ -22,210 +22,210 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 .venv/bin/playwright install --with-deps chromium
 ```
 
-Репозиторій даних сервер і читає, і пише (трекер після кожного ранку), тому
-deploy key для нього потрібен з правом запису. Для рушія досить читання.
+The server both reads and writes the data repository (the tracker after every
+morning run), so its deploy key needs write access. Read access is enough for the engine.
 
-## Конфіг машини: `/root/.claude-env` (chmod 600, поза git)
+## Machine config: `/root/.claude-env` (chmod 600, outside git)
 
 ```bash
 CLAUDE_CODE_OAUTH_TOKEN=sk-ant-oat01-...
 JOBSEARCH_CLIENTS_DIR=/opt/jobsearch-clients/clients
-JOBSEARCH_OPERATOR_EMAIL=operator@example.com   # звіти, співбесіди
-JOBSEARCH_ALERT_TO=operator@example.com         # алерти про збої
-JOBSEARCH_OPERATOR_MAIL=evening                 # evening: один зведений лист після вечірнього рану, вночі нічого; always: лист після кожного рану
+JOBSEARCH_OPERATOR_EMAIL=operator@example.com   # reports, interviews
+JOBSEARCH_ALERT_TO=operator@example.com         # failure alerts
+JOBSEARCH_OPERATOR_MAIL=evening                 # evening: one summary mail after the evening run, nothing at night; always: a mail after every run
 PERPLEXITY_API_KEY=...
 FIRECRAWL_API_KEY=...
-JOBSEARCH_VNC_HINT='vnc://localhost:5901 (спершу ssh -f -N -L 5901:127.0.0.1:5900 <server>)'   # куди дивитись: re-login, hand-off картки воркера
+JOBSEARCH_VNC_HINT='vnc://localhost:5901 (first ssh -f -N -L 5901:127.0.0.1:5900 <server>)'   # where to look: re-login, worker hand-off cards
 # CLAUDE_MODEL=opus
-# JOBSEARCH_TELEGRAM_TOKEN_<SLUG>=...   токен Telegram-бота клієнта (етап 2a); chat_id в accounts.yaml
-# JOBSEARCH_LOCK_WAIT=900               скільки run_agent.sh чекає на лок машини, с
-# JOBSEARCH_INBOX_DRY_RUN=1             тіньовий тиждень inbox watcher-а: без трекера й пошти
+# JOBSEARCH_TELEGRAM_TOKEN_<SLUG>=...   the client's Telegram bot token (stage 2a); chat_id in accounts.yaml
+# JOBSEARCH_LOCK_WAIT=900               how long run_agent.sh waits for the machine lock, s
+# JOBSEARCH_INBOX_DRY_RUN=1             shadow week of the inbox watcher: no tracker, no mail
 ```
 
-`run_agent.sh` читає цей файл сам. Без `FIRECRAWL_API_KEY` запасний шлях
-скрапінгу мовчки вимикається, решта працює.
+`run_agent.sh` reads this file itself. Without `FIRECRAWL_API_KEY` the fallback
+scraping path is silently disabled, the rest works.
 
 ## Claude auth
 
-`claude setup-token` друкує довгоживучий токен у термінал, файла не створює.
-Запускати в широкій tmux-панелі, інакше токен обріжеться переносом рядка:
+`claude setup-token` prints a long-lived token to the terminal and creates no file.
+Run it in a wide tmux pane, otherwise the token gets cut by a line wrap:
 
 ```bash
 tmux new-session -d -s token -x 400 -y 50 "claude setup-token; sleep 600"
-tmux capture-pane -t token -p -J        # URL для авторизації в браузері
-tmux send-keys -t token "<код>" Enter
+tmux capture-pane -t token -p -J        # URL for authorising in the browser
+tmux send-keys -t token "<code>" Enter
 tmux capture-pane -t token -p -J | grep -o "sk-ant-oat01[a-zA-Z0-9_-]*" | head -1
 tmux kill-session -t token
-# перевірка:
+# check:
 set -a; source /root/.claude-env; set +a; claude -p "reply with exactly: AUTH-OK"
 ```
 
-Модель за замовчуванням Opus: на слабшій моделі агент вигадував статуси
-заявок і Msg-ID.
+The default model is Opus: on a weaker model the agent invented application
+statuses and Msg-IDs.
 
 ## Gmail
 
-Для кожної скриньки клієнта окремий каталог `~/.gmail-mcp/<creds_dir>`
-(назва з `accounts.yaml → creds_dir`) з токеном `credentials.json` і ключем
-OAuth-клієнта `gcp-oauth.keys.json`.
+Each client mailbox has its own directory `~/.gmail-mcp/<creds_dir>`
+(name from `accounts.yaml → creds_dir`) with the token `credentials.json` and the
+OAuth client key `gcp-oauth.keys.json`.
 
-Ключ OAuth-клієнта краще заводити під власним Google-акаунтом клієнта: свій
-проєкт Google Cloud, своя згода, сама себе додає в тестові користувачі. Тоді
-клієнти не залежать один від одного і від акаунта оператора. Якщо в каталозі
-клієнта ключа нема, рушій бере спільний `~/.gmail-mcp/gcp-oauth.keys.json`
-(стара схема, один проєкт на машину: кожну нову скриньку треба додавати в
-Test users того проєкту, інакше Google дає `403 access_denied`).
+The OAuth client key is best created under the client's own Google account: own
+Google Cloud project, own consent screen, adds herself to the test users. Then
+clients do not depend on each other or on the operator's account. If the client's
+directory has no key, the engine takes the shared `~/.gmail-mcp/gcp-oauth.keys.json`
+(the old scheme, one project per machine: every new mailbox must be added to the
+Test users of that project, otherwise Google returns `403 access_denied`).
 
-Створити ключ під акаунтом клієнта (у браузері, залогіненим як її jobs-пошта):
+Create the key under the client's account (in a browser logged in as her jobs mailbox):
 
-1. console.cloud.google.com → новий проєкт, напр. `jobsearch-<slug>`.
+1. console.cloud.google.com → new project, e.g. `jobsearch-<slug>`.
 2. APIs & Services → Library → Gmail API → Enable.
-3. Google Auth Platform → Branding: назва застосунку, support email і
-   contact email = її jobs-адреса; Audience: External; Test users: її
-   jobs-адреса (і main, якщо є).
+3. Google Auth Platform → Branding: app name, support email and
+   contact email = her jobs address; Audience: External; Test users: her
+   jobs address (and main, if any).
 4. Clients → Create client → Desktop app → Download JSON →
-   `~/.gmail-mcp/<creds_dir>/gcp-oauth.keys.json` на сервері.
+   `~/.gmail-mcp/<creds_dir>/gcp-oauth.keys.json` on the server.
 
-Токен:
+Token:
 
 ```bash
 mkdir -p ~/.gmail-mcp/<creds_dir>
 GMAIL_OAUTH_PATH=~/.gmail-mcp/<creds_dir>/gcp-oauth.keys.json \
 GMAIL_CREDENTIALS_PATH=~/.gmail-mcp/<creds_dir>/credentials.json \
   npx -y @gongrzhe/server-gmail-autoauth-mcp auth
-# відкрити надрукований URL, увійти в ПОТРІБНУ скриньку
+# open the printed URL, sign in to the RIGHT mailbox
 JOBSEARCH_CLIENT=<slug> /opt/jobsearch-autopilot/bin/js scripts/gmail_rest.py check jobs
 JOBSEARCH_CLIENT=<slug> /opt/jobsearch-autopilot/bin/js scripts/gmail_rest.py check main
 ```
 
-`check` друкує адресу скриньки: звірити, що токен від тієї, що треба.
+`check` prints the mailbox address: confirm the token belongs to the right one.
 
-## Re-login у портали (новий клієнт або протухла сесія)
+## Re-login to portals (new client or expired session)
 
-Логіни StepStone, XING, LinkedIn живуть у браузерному профілі
-`~/.playwright-mcp/<playwright_profile>`. Вхід робить людина через VNC:
+StepStone, XING and LinkedIn logins live in the browser profile
+`~/.playwright-mcp/<playwright_profile>`. A human signs in over VNC:
 
 ```bash
 Xvfb :99 -screen 0 1280x900x24 &
-x11vnc -display :99 -rfbauth /root/.vnc/passwd -localhost -forever &   # пароль: x11vnc -storepasswd
+x11vnc -display :99 -rfbauth /root/.vnc/passwd -localhost -forever &   # password: x11vnc -storepasswd
 cd /opt/jobsearch-autopilot
 DISPLAY=:99 JOBSEARCH_CLIENT=<slug> bin/js scripts/relogin.py
-# з Mac: ssh -f -N -L 5901:127.0.0.1:5900 <server>; open vnc://localhost:5901, залогінитись у вікні браузера,
-# потім Enter у терміналі (з --wait-for <domain> Enter не потрібен: скрипт сам дочекається входу)
+# from the Mac: ssh -f -N -L 5901:127.0.0.1:5900 <server>; open vnc://localhost:5901, sign in in the browser window,
+# then Enter in the terminal (with --wait-for <domain> no Enter is needed: the script waits for the login itself)
 JOBSEARCH_CLIENT=<slug> bin/js scripts/session_health.py --json
 ```
 
-**StepStone і XING.** Обидва логіняться автоматично в тому ж браузері, що
-працює далі, через «Mit Google einloggen», якщо акаунт порталу зв'язаний із
-jobs-Gmail (перший раз Google питає згоду, її дає людина по VNC або
-оператор у Chrome-профілі клієнта). Деталі для XING:
+**StepStone and XING.** Both sign in automatically in the same browser that
+keeps working afterwards, via «Mit Google einloggen», if the portal account is linked
+to the jobs Gmail (the first time Google asks for consent, a human gives it over VNC
+or the operator does in the client's Chrome profile). Details for XING:
 
-**XING** (з 07.2026) не дає персистентної сесії навіть із «Eingeloggt
-bleiben»: кук `login` сесійний і зникає з процесом браузера. Тому для XING
-ручний логін по VNC не допомагає; замість нього `session_health` і
-`bot.apply` логінять XING самі, у тому ж браузері, що працює далі
-(`bot/scrapers/portal_login.py`). Найпростіше:
-XING-акаунт клієнта прив'язаний до jobs-Gmail («Weiter mit Google»), а в
-профіль по VNC один раз зроблено вхід у Google. Google-сесія персистентна,
-і скрипт логінить XING через неї без жодного пароля. Запасний шлях: файл
-з обліковими даними, лише на сервері, chmod 600, шлях в
+**XING** (since 07.2026) gives no persistent session even with «Eingeloggt
+bleiben»: the `login` cookie is a session cookie and disappears with the browser
+process. So for XING a manual login over VNC does not help; instead `session_health`
+and `bot.apply` sign in to XING themselves, in the same browser that keeps working
+(`bot/scrapers/portal_login.py`). The simplest setup:
+the client's XING account is linked to the jobs Gmail («Weiter mit Google»), and
+the profile has been signed in to Google once over VNC. The Google session is
+persistent, and the script signs in to XING through it without any password. Fallback:
+a credentials file, server only, chmod 600, path in
 `accounts.yaml → portal_credentials`:
 
 ```json
-{"xing": {"username": "<xing-email>", "password": "<пароль>"}}
+{"xing": {"username": "<xing-email>", "password": "<password>"}}
 ```
 
-Перевірка: `JOBSEARCH_CLIENT=<slug> DISPLAY=:99 bin/js scripts/portal_login.py xing` (окремий процес, лише діагностика).
+Check: `JOBSEARCH_CLIENT=<slug> DISPLAY=:99 bin/js scripts/portal_login.py xing` (separate process, diagnostics only).
 
-reCAPTCHA проходить лише людина. Сесію з іншої машини можна перенести через
-`scripts/export_storage_state.py` і `import_storage_state.py`; файл стану
-після імпорту видалити на обох машинах, у ньому живі cookies.
+Only a human passes reCAPTCHA. A session from another machine can be moved with
+`scripts/export_storage_state.py` and `import_storage_state.py`; delete the state
+file on both machines after the import, it holds live cookies.
 
 ## Cron
 
-Вмикати після репетиції хоча б одного клієнта (`docs/onboarding.md` §4):
+Enable after a rehearsal of at least one client (`docs/onboarding.md` §4):
 
 ```bash
 crontab /opt/jobsearch-autopilot/scripts/server/crontab.txt
 ```
 
-Клієнти обробляються по черзі під одним локом. Кого брати, вирішує
-`status: active` у `profile.yaml`: щоб поставити людину на паузу, cron чіпати
-не треба.
+Clients are processed one after another under a single lock. Who gets picked is
+decided by `status: active` in `profile.yaml`: to pause a person, cron does not
+need touching.
 
-Ручний запуск одного клієнта:
+Manual run of one client:
 
 ```bash
 scripts/server/run_agent.sh <slug> evening
 APPLY_MODE=dry-run scripts/server/run_agent.sh <slug> morning
 ```
 
-## Telegram-бот і inbox watcher (етап 2a)
+## Telegram bot and inbox watcher (stage 2a)
 
-Що робить: погодинний прохід по пошті контрактного клієнта (відповіді на подачі,
-листи платформ) оновлює трекер, шле оператору картки з чернетками в Telegram і
-відправляє follow-ups; бот приймає кнопки (надіслати чернетку, пропустити, пауза).
-Спека: `docs/superpowers/specs/2026-10-22-contract-phase2-server-automation-design.md`.
+What it does: an hourly pass over the contract client's mail (replies to applications,
+platform mails) updates the tracker, sends the operator cards with drafts in Telegram and
+sends follow-ups; the bot accepts buttons (send the draft, skip, pause).
+Spec: `docs/superpowers/specs/2026-10-22-contract-phase2-server-automation-design.md`.
 
-Разові кроки оператора (нічого з цього не автоматизовано):
+One-time operator steps (none of this is automated):
 
-1. BotFather → новий бот → токен у `/root/.claude-env`:
-   `export JOBSEARCH_TELEGRAM_TOKEN_<SLUG>=...` (SLUG великими; інше ім'я
-   змінної можна задати в `accounts.yaml → telegram.token_env`).
-2. Юніти й сервіс бота:
+1. BotFather → new bot → token into `/root/.claude-env`:
+   `export JOBSEARCH_TELEGRAM_TOKEN_<SLUG>=...` (SLUG in upper case; a different
+   variable name can be set in `accounts.yaml → telegram.token_env`).
+2. Units and the bot service:
    ```bash
    cp /opt/jobsearch-autopilot/scripts/server/systemd/*.service /opt/jobsearch-autopilot/scripts/server/systemd/*.timer /etc/systemd/system/
    systemctl daemon-reload
    systemctl enable --now jobsearch-telegram@<slug>
    ```
-3. Написати боту `/start`: без `chat_id` він відповідає лише своїм id. Вписати
-   його в `accounts.yaml → telegram.chat_id`, запушити дані, на сервері
-   `git -C /opt/jobsearch-clients pull` і `systemctl restart jobsearch-telegram@<slug>`.
-   Інші чати бот ігнорує мовчки. Зупиняти бота лише через `systemctl stop`:
-   `Restart=always` піднімає його знову за 30 с.
-4. Тіньовий тиждень (спека §12): у `/root/.claude-env` рядок
-   `export JOBSEARCH_INBOX_DRY_RUN_<SLUG>=1` (без суфікса гасить усіх клієнтів машини), потім `systemctl enable --now jobsearch-inbox@<slug>.timer`.
-   У цьому режимі трекер і пошта не чіпаються, картки лягають у
-   `<clients>/<slug>/var/state/cards_dry.jsonl`. Через тиждень прибрати рядок:
-   наступний прохід живий. Юніт не редагувати: у oneshot-юніті дописаний
-   `ExecStart=` з drop-in не замінює перший, а додає другий запуск.
-5. Перевірка: `journalctl -u jobsearch-inbox@<slug> -n 50`, `journalctl -u jobsearch-telegram@<slug> -f`,
-   стан у `var/state/` (`cards.jsonl`, `inbox_seen.json`, `inbox_seen_dry.json`, `queue.jsonl`,
-   `pause`, `last_watch`), рядок `INBOX OK: …` наприкінці кожного проходу. Ручний прохід перед
-   увімкненням таймера (перевіряє, що `claude` є в PATH сервісу й читає `cards_dry.jsonl`):
+3. Send the bot `/start`: without a `chat_id` it replies only with its own id. Put
+   it into `accounts.yaml → telegram.chat_id`, push the data, on the server
+   `git -C /opt/jobsearch-clients pull` and `systemctl restart jobsearch-telegram@<slug>`.
+   The bot silently ignores other chats. Stop the bot only via `systemctl stop`:
+   `Restart=always` brings it back up in 30 s.
+4. Shadow week (spec §12): in `/root/.claude-env` the line
+   `export JOBSEARCH_INBOX_DRY_RUN_<SLUG>=1` (without the suffix it silences all clients of the machine), then `systemctl enable --now jobsearch-inbox@<slug>.timer`.
+   In this mode the tracker and mail are not touched, cards land in
+   `<clients>/<slug>/var/state/cards_dry.jsonl`. After a week remove the line:
+   the next pass is live. Do not edit the unit: in a oneshot unit an added
+   `ExecStart=` from a drop-in does not replace the first one, it adds a second run.
+5. Check: `journalctl -u jobsearch-inbox@<slug> -n 50`, `journalctl -u jobsearch-telegram@<slug> -f`,
+   state in `var/state/` (`cards.jsonl`, `inbox_seen.json`, `inbox_seen_dry.json`, `queue.jsonl`,
+   `pause`, `last_watch`), the line `INBOX OK: …` at the end of every pass. Manual pass before
+   enabling the timer (checks that `claude` is in the service's PATH and reads `cards_dry.jsonl`):
    `/opt/jobsearch-autopilot/scripts/server/run_service.sh scripts/inbox_watch.py <slug> --days 2 --dry-run`.
 
-Увесь прохід watcher-а йде під тим самим локом машини, що й нічні рани (зайнятий лок
-понад `JOBSEARCH_LOCK_WAIT` с означає пропуск цієї години), а `run_agent.sh` тепер чекає
-на лок замість пропуску рану. Чернетки пише `claude -p` без MCP-серверів і вбудованих
-інструментів. Перед проходом дані підтягуються (`git pull --ff-only`), після нього
-`tracker.md` комітиться й пушиться; збій будь-якого з цих кроків і збій читання пошти
-стають алертом у вечірньому зведеному листі. Пауза з бота (`/pause`) зупиняє лише
-відправку, картки приходять далі.
+The whole watcher pass runs under the same machine lock as the night runs (a lock busy
+for more than `JOBSEARCH_LOCK_WAIT` s means skipping this hour), and `run_agent.sh` now waits
+for the lock instead of skipping the run. Drafts are written by `claude -p` without MCP servers and built-in
+tools. Before the pass the data is pulled (`git pull --ff-only`), after it
+`tracker.md` is committed and pushed; a failure of any of these steps and a failure to read mail
+become an alert in the evening summary mail. Pause from the bot (`/pause`) stops only
+sending, cards keep coming.
 
-### Сповіщення для клієнтів з ранковим агентом (режим notify)
+### Notifications for clients with the morning agent (notify mode)
 
-Клієнти ринку `de_employment` (трекер веде `claude -p` уночі) отримують той самий
-watcher у режимі лише сповіщень: `accounts.yaml → telegram.mode: notify`. Трекер,
-чернетки, follow-up і лок машини не чіпаються; про співбесіду, запит документів чи
-невідомий лист від компанії з трекера оператор дізнається у ту ж годину, з уривком
-листа і кнопкою в Gmail. Після кожного нічного рану `notify_run.py` окремо шле
-рядки трекера, що стали `interview*`/`offer*`/`action_needed`, а `send_alert.py`
-шле алерти в Telegram замість черги листа. Зведений лист (`operator_summary.py`)
-при налаштованому Telegram не йде взагалі. Привід: 28.10.2026 ранковий ран о 03:11
-записав телефонну співбесіду на 17:30 того ж дня, а оператор дізнався б о 20:40.
+Clients of the `de_employment` market (the tracker is kept by `claude -p` at night) get the same
+watcher in notification-only mode: `accounts.yaml → telegram.mode: notify`. Tracker,
+drafts, follow-up and the machine lock are not touched; the operator learns about an interview,
+a document request or an unknown mail from a company in the tracker within the same hour, with an excerpt
+of the mail and a button to Gmail. After every night run `notify_run.py` separately sends
+the tracker rows that became `interview*`/`offer*`/`action_needed`, and `send_alert.py`
+sends alerts to Telegram instead of the mail queue. The summary mail (`operator_summary.py`)
+is not sent at all when Telegram is configured. Trigger: on 28.10.2026 the morning run at 03:11
+recorded a phone interview at 17:30 the same day, and the operator would have learned of it at 20:40.
 
-Один бот на всіх таких клієнтів, чат оператора, текст з іменем клієнта попереду:
+One bot for all such clients, the operator's chat, text with the client's name in front:
 
 ```bash
-# /root/.claude-env: той самий токен під спільним ім'ям
-export JOBSEARCH_TELEGRAM_TOKEN_OPERATOR="$JOBSEARCH_TELEGRAM_TOKEN_<SLUG-з-ботом>"
+# /root/.claude-env: the same token under a shared name
+export JOBSEARCH_TELEGRAM_TOKEN_OPERATOR="$JOBSEARCH_TELEGRAM_TOKEN_<SLUG-with-bot>"
 ```
 ```yaml
-# accounts.yaml клієнта
+# the client's accounts.yaml
 telegram:
   token_env: JOBSEARCH_TELEGRAM_TOKEN_OPERATOR
-  chat_id: <chat_id оператора>
+  chat_id: <operator chat_id>
   mode: notify
   lang: uk
 ```
@@ -233,31 +233,31 @@ telegram:
 systemctl enable --now jobsearch-inbox@<slug>.timer
 ```
 
-`jobsearch-telegram@<slug>` для таких клієнтів НЕ вмикати: long polling на один
-токен може тримати лише один процес, і це бот клієнта з `mode: cards`. Ручна
-перевірка: `run_service.sh scripts/inbox_watch.py <slug> --days 2` → рядок
-`INBOX OK: notified=…`. Перший прохід бачить останні `--days` днів цілком.
+Do NOT enable `jobsearch-telegram@<slug>` for such clients: long polling on one
+token can be held by only one process, and that is the client's bot with `mode: cards`. Manual
+check: `run_service.sh scripts/inbox_watch.py <slug> --days 2` → the line
+`INBOX OK: notified=…`. The first pass sees the last `--days` days in full.
 
-## Подачі без тапу: черга й диспетчер (етап 2b)
+## Applications without a tap: queue and dispatcher (stage 2b)
 
-Що робить: вечірній ран більше не шле дайджест, а ставить відібрані ліди в
-чергу `var/state/queue.jsonl` (`scripts/enqueue_leads.py`: канал подачі без
-логіну LinkedIn, пакет `var/run/packages_<дата>/<slug>/`, перевірки перед
-відправкою). Диспетчер (`scripts/dispatch_leads.py`, таймер щопівгодини вдень)
-шле email-ліди сам у межах `targeting.yaml → daily_limits`, пише рядок у трекер
-і квитанцію в Telegram. Заблокований лід лежить `held` з причинами і видно в
-`/status`; ліди форм подає браузерний воркер (етап 2c, нижче), платформи з
-логіном лишаються `queued`. Спека: та сама, §15.
+What it does: the evening run no longer sends a digest, it puts the selected leads into
+the queue `var/state/queue.jsonl` (`scripts/enqueue_leads.py`: application channel without
+LinkedIn login, package `var/run/packages_<date>/<slug>/`, checks before
+sending). The dispatcher (`scripts/dispatch_leads.py`, timer every half hour during the day)
+sends email leads itself within `targeting.yaml → daily_limits`, writes a row to the tracker
+and a receipt to Telegram. A blocked lead stays `held` with reasons and is visible in
+`/status`; form leads are submitted by the browser worker (stage 2c, below), platforms with
+login stay `queued`. Spec: the same one, §15.
 
-Разові кроки оператора, у цьому порядку:
+One-time operator steps, in this order:
 
-1. У репозиторії даних: поточні PDF резюме в `clients/<slug>/attachments/` під
-   назвами з `tracks.yaml → tracks.<трек>.cv_file` і `targeting.yaml →
-   agency_attachments`; `profile.yaml → report_mode: none` (без Tagesbericht,
-   лише лист «Hinweis» при збоях); `targeting.yaml → send_policy: auto`,
-   `daily_limits: {email: 5, form: 5}`. Закомітити, запушити, на сервері
+1. In the data repository: current CV PDFs in `clients/<slug>/attachments/` under
+   the names from `tracks.yaml → tracks.<track>.cv_file` and `targeting.yaml →
+   agency_attachments`; `profile.yaml → report_mode: none` (no Tagesbericht,
+   only a «Hinweis» mail on failures); `targeting.yaml → send_policy: auto`,
+   `daily_limits: {email: 5, form: 5}`. Commit, push, on the server
    `git -C /opt/jobsearch-clients pull`.
-2. Юніти й тіньовий тиждень:
+2. Units and the shadow week:
    ```bash
    cp /opt/jobsearch-autopilot/scripts/server/systemd/jobsearch-dispatch@.* /etc/systemd/system/
    systemctl daemon-reload
@@ -265,45 +265,45 @@ systemctl enable --now jobsearch-inbox@<slug>.timer
    systemctl enable --now jobsearch-dispatch@<slug>.timer
    systemctl restart jobsearch-telegram@<slug>
    ```
-3. Після першого вечірнього рану: `cat var/state/queue.jsonl` і
-   `cat var/run/packages_<дата>/*/meta.json`; після першого проходу таймера:
-   `cat var/state/queue_dry.jsonl` (що пішло б) і `journalctl -u jobsearch-dispatch@<slug> -n 30`.
-   Ручний прохід: `/opt/jobsearch-autopilot/scripts/server/run_service.sh scripts/dispatch_leads.py <slug> --dry-run`.
-4. Кінець тіньового тижня: прибрати рядок `JOBSEARCH_DISPATCH_DRY_RUN` з
-   `/root/.claude-env`; наступний прохід таймера шле.
+3. After the first evening run: `cat var/state/queue.jsonl` and
+   `cat var/run/packages_<date>/*/meta.json`; after the first timer pass:
+   `cat var/state/queue_dry.jsonl` (what would have gone out) and `journalctl -u jobsearch-dispatch@<slug> -n 30`.
+   Manual pass: `/opt/jobsearch-autopilot/scripts/server/run_service.sh scripts/dispatch_leads.py <slug> --dry-run`.
+4. End of the shadow week: remove the `JOBSEARCH_DISPATCH_DRY_RUN` line from
+   `/root/.claude-env`; the next timer pass sends.
 
-Диспетчер не бере лок машини (ні LLM, ні дисплея). Перед проходом `git pull
---ff-only` даних, після живої подачі `tracker.md` комітиться й пушиться.
-`/pause` з бота зупиняє і його.
+The dispatcher does not take the machine lock (no LLM, no display). Before the pass `git pull
+--ff-only` of the data, after a live application `tracker.md` is committed and pushed.
+`/pause` from the bot stops it as well.
 
-## Браузерний воркер: ATS-форми без логіну (етап 2c)
+## Browser worker: ATS forms without login (stage 2c)
 
-Що робить: `scripts/apply_leads.py` (таймер щогодини вдень о :40, останній
-старт 19:40) бере з `var/state/queue.jsonl` queued ліди каналу `form` (Ashby,
-Greenhouse, Lever, Workable без логіну) у межах `daily_limits.form` і подає їх
-у видимому Chromium на дисплеї сервера `:99`, у профілі Playwright клієнта.
-Поля заповнюються з `profile.yaml` (`links`, `form_answers`), вільний текст
-пише модель, резюме береться з пакета (файл на `CV…`, інакше перше вкладення).
-Подано: рядок у трекері й квитанція в Telegram. Вакансія закрита: `held`.
-Все, що воркер не довів до підтвердження (обов'язкове поле без відповіді,
-reCAPTCHA, помилки валідації, тиша після Submit), стає hand-off: вкладка
-лишається відкритою, в Telegram приходить картка. Платформи з логіном і Easy
-Apply лишаються `queued` до наступного етапу. Воркер бере лок машини лише на
-час заповнення форми; поки чекає оператора, лок вільний, а профіль браузера
-зайнятий. Спека: та сама, §7 (крок 2c) і §15.
+What it does: `scripts/apply_leads.py` (hourly timer during the day at :40, last
+start 19:40) takes queued leads of the `form` channel (Ashby,
+Greenhouse, Lever, Workable without login) from `var/state/queue.jsonl` within `daily_limits.form` and submits them
+in a visible Chromium on the server display `:99`, in the client's Playwright profile.
+Fields are filled from `profile.yaml` (`links`, `form_answers`), free text
+is written by the model, the CV is taken from the package (a file starting with `CV…`, otherwise the first attachment).
+Submitted: a row in the tracker and a receipt in Telegram. Vacancy closed: `held`.
+Everything the worker did not bring to a confirmation (a required field without an answer,
+reCAPTCHA, validation errors, silence after Submit) becomes a hand-off: the tab
+stays open, a card arrives in Telegram. Platforms with login and Easy
+Apply stay `queued` until the next stage. The worker takes the machine lock only for
+the time of filling the form; while it waits for the operator, the lock is free and the browser profile
+is busy. Spec: the same one, §7 (step 2c) and §15.
 
-Разові кроки оператора, у цьому порядку:
+One-time operator steps, in this order:
 
-1. Xvfb `:99` і x11vnc уже працюють (див. «Re-login у портали»). x11vnc
-   слухає лише localhost і з паролем (`-localhost -rfbauth /root/.vnc/passwd`),
-   тому ззовні до дисплея лише через SSH-тунель. Підказка для hand-off картки в
+1. Xvfb `:99` and x11vnc are already running (see «Re-login to portals»). x11vnc
+   listens only on localhost and with a password (`-localhost -rfbauth /root/.vnc/passwd`),
+   so from outside the display is reachable only through an SSH tunnel. The hint for the hand-off card in
    `/root/.claude-env`:
    ```bash
-   export JOBSEARCH_VNC_HINT='vnc://localhost:5901 (спершу ssh -f -N -L 5901:127.0.0.1:5900 <server>)'
+   export JOBSEARCH_VNC_HINT='vnc://localhost:5901 (first ssh -f -N -L 5901:127.0.0.1:5900 <server>)'
    ```
-   Без неї картка не каже, куди дивитись. У `profile.yaml` клієнта заповнені
-   `links` і `form_answers`, бо без них більшість форм іде в hand-off.
-2. Юніти й тіньовий прохід:
+   Without it the card does not say where to look. The client's `profile.yaml` has
+   `links` and `form_answers` filled in, because without them most forms go to hand-off.
+2. Units and the shadow pass:
    ```bash
    cp /opt/jobsearch-autopilot/scripts/server/systemd/jobsearch-apply@.* /etc/systemd/system/
    systemctl daemon-reload
@@ -311,207 +311,230 @@ Apply лишаються `queued` до наступного етапу. Ворк
    systemctl enable --now jobsearch-apply@<slug>.timer
    systemctl restart jobsearch-telegram@<slug>
    ```
-   Рестарт бота потрібен, щоб кнопки hand-off картки закривали й лід у черзі.
-3. Перший тіньовий прохід руками, коли в черзі є form-лід:
+   The bot restart is needed so that the hand-off card buttons also close the lead in the queue.
+3. First shadow pass by hand, when there is a form lead in the queue:
    ```bash
    DISPLAY=:99 /opt/jobsearch-autopilot/scripts/server/run_service.sh scripts/apply_leads.py <slug> --dry-run
    ```
-   Форма заповнюється без Submit. Подивитись скріншот
-   `var/run/packages_<дата>/<slug>/working/apply_form_filled.png` (тут `<slug>`
-   це папка ліда в пакетах) і рядок у `var/state/queue_dry.jsonl` (`result`:
-   статус, причина hand-off, заповнені поля). Тіньовий режим не заповнює той
-   самий лід двічі за день. Лог таймера: `journalctl -u jobsearch-apply@<slug> -n 30`.
-4. Живий режим: прибрати рядок `JOBSEARCH_APPLY_DRY_RUN` з `/root/.claude-env`
-   (на деплої 2d змінна прибирається в будь-якому разі, крок 2 розділу про
-   етап 2d; відтоді тіньовий режим лише за платформою в `targeting.yaml`);
-   наступний прохід таймера подає. `send_policy`, відмінний від `auto`, і далі
-   тримає воркер у тіньовому режимі.
-5. Hand-off. Картка називає компанію, роль, причину, URL і VNC-підказку. З Mac:
+   The form is filled without Submit. Look at the screenshot
+   `var/run/packages_<date>/<slug>/working/apply_form_filled.png` (here `<slug>`
+   is the lead's folder in the packages) and the row in `var/state/queue_dry.jsonl` (`result`:
+   status, hand-off reason, filled fields). Shadow mode does not fill the
+   same lead twice a day. Timer log: `journalctl -u jobsearch-apply@<slug> -n 30`.
+4. Live mode: remove the `JOBSEARCH_APPLY_DRY_RUN` line from `/root/.claude-env`
+   (on the 2d deploy the variable is removed in any case, step 2 of the section on
+   stage 2d; from then on shadow mode is set only per platform in `targeting.yaml`);
+   the next timer pass submits. A `send_policy` other than `auto` still
+   keeps the worker in shadow mode.
+5. Hand-off. The card names the company, role, reason, URL and the VNC hint. From the Mac:
    ```bash
    ssh -f -N -L 5901:127.0.0.1:5900 <server>
    open vnc://localhost:5901
    ```
-   У вікні Chromium доробити форму й натиснути Submit. Вкладка чекає до 19:55
-   (`JOBSEARCH_HANDOFF_UNTIL=HH:MM` у `/root/.claude-env` змінює дедлайн). Якщо
-   сторінка показала підтвердження, воркер сам закриває лід як поданий.
-   Кнопка «Подано» на картці закриває лід як `sent` з рядком у трекері,
-   «Пропустити» кладе його в `held` (`operator_skipped`). Без відповіді до
-   дедлайну лід стає `failed`, картка `expired`. Один hand-off на прохід: поки
-   він триває, решта форм чекає, а наступний тік таймера не стартує.
+   In the Chromium window finish the form and press Submit. The tab waits until 19:55
+   (`JOBSEARCH_HANDOFF_UNTIL=HH:MM` in `/root/.claude-env` changes the deadline). If
+   the page showed a confirmation, the worker closes the lead as submitted itself.
+   The «Submitted» button on the card closes the lead as `sent` with a row in the tracker,
+   «Skip» puts it into `held` (`operator_skipped`). Without an answer by the
+   deadline the lead becomes `failed`, the card `expired`. One hand-off per pass: while
+   it lasts, the remaining forms wait, and the next timer tick does not start.
 
-За 10 хв до дедлайну (з 19:45) воркер не починає нової живої подачі, решта
-черги лишається `queued` до наступного дня (у журналі один рядок про це);
-hand-off, що почався раніше, однаково чекає до 19:55.
-Перед проходом `git pull --ff-only` даних, після живої подачі `tracker.md`
-комітиться й пушиться. Без `DISPLAY` чи з профілем браузера, який тримає інший
-процес (`scripts/relogin.py`, MCP), прохід виходить з 0 і чергу не чіпає;
-профіль береться лише тоді, коли в черзі є form-ліди. Без токена бота чи
-`chat_id` воркер працює лише в тіньовому режимі: hand-off картка не дійшла б.
-Пакет без вкладень лягає в `held` (`attachment_none`). Збій лока машини йде
-алертом «Browser-Worker: …» у зведений лист. `/pause` з бота зупиняє і воркер,
-`systemctl stop` закриває браузер і віддає профіль.
+10 min before the deadline (from 19:45) the worker starts no new live application, the rest of
+the queue stays `queued` until the next day (one line about it in the journal);
+a hand-off that started earlier still waits until 19:55.
+Before the pass `git pull --ff-only` of the data, after a live application `tracker.md`
+is committed and pushed. Without `DISPLAY` or with a browser profile held by another
+process (`scripts/relogin.py`, MCP), the pass exits with 0 and does not touch the queue;
+the profile is taken only when there are form leads in the queue. Without a bot token or
+`chat_id` the worker runs only in shadow mode: the hand-off card would not arrive.
+A package without attachments lands in `held` (`attachment_none`). A machine lock failure goes
+as the alert «Browser-Worker: …» into the summary mail. `/pause` from the bot stops the worker too,
+`systemctl stop` closes the browser and releases the profile.
 
-## Платформи з логіном: LinkedIn, freelancermap, GULP (етап 2d)
+## Form worker for the employment market (de_employment clients)
 
-Що працює: той самий `jobsearch-apply@<slug>.timer` (щогодини вдень о :40, останній
-старт 19:40), нових юнітів нема. Крім каналу `form` прохід бере `linkedin_offsite`,
-`linkedin_easy` і `platform_login` (freelancermap, GULP). Порядок у проході:
-спершу `linkedin_offsite` (дешева резолюція зовнішнього посилання, лід стає `form`
-з ATS за хостом і того ж проходу подається як form), далі `form`, `linkedin_easy`,
-`platform_login`. Резолюція нічого не подає і не рахується в ліміти.
+The same `jobsearch-apply@<slug>.timer` as for the contract client: the morning agent after
+`--batch-render` puts `manual_link` leads into the queue (`scripts/enqueue_leads.py --date <today>`,
+Step 5b of the prompt), the worker opens the employer's site during the day in the client's profile on display :99,
+fills the form in German from profile.yaml (address, Geburtsdatum, Gehaltsvorstellung,
+Eintrittstermin, Anschreiben file, Zeugnisse with `portal: true`), presses Submit and moves the row
+«🔄 Файли готові» to `portal_submitted`. A stuck form (captcha, login, unclear required
+field) → a hand-off card into the shared bot without buttons: the operator finishes it over VNC (the worker sees
+the confirmation on the page) or closes the tab (`held operator_skipped`).
+Spec: `docs/superpowers/specs/2026-10-28-de-employment-apply-worker-design.md`.
 
-Вимикачі й ліміти в `targeting.yaml` клієнта:
+```bash
+systemctl enable --now jobsearch-apply@<slug>.timer
+DISPLAY=:99 /opt/jobsearch-autopilot/scripts/server/run_service.sh scripts/apply_leads.py <slug> --dry-run
+```
+
+Shadow: without `send_policy: auto` in the client's `targeting.yaml` the worker only fills the form, takes
+the screenshot `applications/<date>/<package>/working/apply_form_filled.png` and writes `queue_dry.jsonl`.
+Live mode: `send_policy: auto` on the operator's word after reviewing the screenshots. Daily limit
+`daily_limits.form`. LinkedIn Easy Apply for these clients stays `held platform_off:linkedin`
+until `platforms.linkedin: on` appears in their `targeting.yaml`.
+
+## Platforms with login: LinkedIn, freelancermap, GULP (stage 2d)
+
+What works: the same `jobsearch-apply@<slug>.timer` (hourly during the day at :40, last
+start 19:40), no new units. Besides the `form` channel the pass takes `linkedin_offsite`,
+`linkedin_easy` and `platform_login` (freelancermap, GULP). Order within the pass:
+first `linkedin_offsite` (cheap resolution of the external link, the lead becomes `form`
+with the ATS by host and is submitted as form in the same pass), then `form`, `linkedin_easy`,
+`platform_login`. Resolution submits nothing and does not count against the limits.
+
+Switches and limits in the client's `targeting.yaml`:
 ```yaml
 daily_limits: {email: 5, form: 5, linkedin: 5, freelancermap: 2, gulp: 3}
 platforms: {linkedin: on, freelancermap: shadow, gulp: shadow, freelance_de: off}
 ```
-`on` подає, `shadow` заповнює без Submit (рядок у `var/state/queue_dry.jsonl`,
-скріншот у пакеті), `off` пропускає лід не чіпаючи. Платформа без ключа вимкнена.
-Окрім денного ліміту: не більше 2 подач LinkedIn за прохід і пауза 180 с після
-кожної живої спроби на платформі. `freelance_de` вимкнено, бо Basic-акаунт не
-може відгукуватись.
+`on` submits, `shadow` fills without Submit (a row in `var/state/queue_dry.jsonl`,
+a screenshot in the package), `off` skips the lead without touching it. A platform without a key is off.
+Beyond the daily limit: at most 2 LinkedIn applications per pass and a pause of 180 s after
+every live attempt on a platform. `freelance_de` is off because a Basic account
+cannot respond.
 
-Тимчасові записи лежать у `var/state/platforms.json`. Правило пріоритету:
-`targeting.yaml` це оголошений постійний стан. `/platform <name> off|shadow`
-пише запис до кінця дня; `/platform <name> on` лише стирає запис дня і не
-піднімає оголошені `off` чи `shadow` (бот дописує «declared … in targeting.yaml»).
-`/platform` без аргументів показує рядок на платформу: стан і подано сьогодні /
-ліміт. Постійно перемикати лише правкою `targeting.yaml` у data-репо.
+Temporary records live in `var/state/platforms.json`. Priority rule:
+`targeting.yaml` is the declared permanent state. `/platform <name> off|shadow`
+writes a record until the end of the day; `/platform <name> on` only clears the day's record and does not
+raise declared `off` or `shadow` (the bot appends «declared … in targeting.yaml»).
+`/platform` without arguments shows one line per platform: state and submitted today /
+limit. Switch permanently only by editing `targeting.yaml` in the data repo.
 
-Картки без кнопок:
-- `login_required`: сесія злетіла. Лід лишається `queued`, платформа вимкнена до
-  кінця дня, одна картка на платформу за прохід. Зайти по VNC (тунель і
-  `x11vnc` як у «Re-login у портали»), у вікні браузера залогінитись (з
-  `--wait-for` Enter у терміналі не потрібен: скрипт сам бачить вхід і
-  виходить), далі `/platform <platform> on`:
+Cards without buttons:
+- `login_required`: the session dropped. The lead stays `queued`, the platform is off until
+  the end of the day, one card per platform per pass. Sign in over VNC (tunnel and
+  `x11vnc` as in «Re-login to portals»), sign in in the browser window (with
+  `--wait-for` no Enter in the terminal is needed: the script sees the login itself and
+  exits), then `/platform <platform> on`:
   ```bash
   cd /opt/jobsearch-autopilot
   DISPLAY=:99 JOBSEARCH_CLIENT=<slug> bin/js scripts/relogin.py <login-url> --wait-for <domain>
   ```
-  Адреси входу: LinkedIn `https://www.linkedin.com/login` (`--wait-for linkedin.com`),
+  Login addresses: LinkedIn `https://www.linkedin.com/login` (`--wait-for linkedin.com`),
   freelancermap `https://www.freelancermap.de/login` (`--wait-for freelancermap.de`),
-  GULP `https://www.gulp.de/` і там «Anmelden» (`--wait-for gulp.de`).
-- `restricted`: платформа обмежила акаунт; вимкнено до кінця дня, перевірити
-  акаунт руками, далі `/platform <platform> on`.
-- `platform_quota`: місячна квота вичерпана (freelancermap), лід `held`,
-  платформа вимкнена до 1-го числа.
+  GULP `https://www.gulp.de/` and there «Anmelden» (`--wait-for gulp.de`).
+- `restricted`: the platform restricted the account; off until the end of the day, check
+  the account by hand, then `/platform <platform> on`.
+- `platform_quota`: the monthly quota is used up (freelancermap), the lead is `held`,
+  the platform is off until the 1st of the month.
 
-**Порядок деплою не можна міняти: спершу data-репо, потім рушій.** Якщо рушій
-оновився, а data-репо ще не має ключа `platforms`, кожен LinkedIn-лід і лід
-іншої платформи ляже в `held` з причиною `platform_off`. Відновлення: додати
-`platforms` у data-репо й для кожної дати прогнати `--rechannel` (крок 4).
-Перед деплоєм переконатись, що data-репо з `platforms` запушене з Mac.
+**The deploy order must not change: data repo first, then the engine.** If the engine
+has been updated and the data repo does not yet have the `platforms` key, every LinkedIn lead and every lead
+of another platform lands in `held` with the reason `platform_off`. Recovery: add
+`platforms` to the data repo and run `--rechannel` for every date (step 4).
+Before the deploy make sure the data repo with `platforms` is pushed from the Mac.
 
-Кроки оператора, у цьому порядку (на сервері не міняється нічого без його слова;
-слово на прибирання `JOBSEARCH_APPLY_DRY_RUN` і на LinkedIn першим уже дане):
+Operator steps, in this order (nothing on the server changes without his word;
+the word on removing `JOBSEARCH_APPLY_DRY_RUN` and on LinkedIn first has already been given):
 
-1. Підтягнути репозиторії, спершу дані:
+1. Pull the repositories, data first:
    ```bash
    cd /opt/jobsearch-clients && git pull
    cd /opt/jobsearch-autopilot && git pull
    ```
-2. Прибрати тіньовий прапорець 2c (з цього моменту тіньовий режим задають лише
-   платформи в `targeting.yaml`):
+2. Remove the 2c shadow flag (from this moment shadow mode is set only by
+   the platforms in `targeting.yaml`):
    ```bash
    cp /root/.claude-env /root/.claude-env.bak-2026-10-28
    sed -i '/JOBSEARCH_APPLY_DRY_RUN/d' /root/.claude-env
-   grep -c JOBSEARCH_APPLY_DRY_RUN /root/.claude-env   # має бути 0
+   grep -c JOBSEARCH_APPLY_DRY_RUN /root/.claude-env   # must be 0
    ```
-3. Рестарт бота (нова команда `/platform`):
+3. Restart the bot (new `/platform` command):
    ```bash
    systemctl restart jobsearch-telegram@<slug>
    ```
-4. Перекласти утримані LinkedIn-ліди в нові канали, для кожної дати, коли були
-   такі ліди (тут 26 і 27 жовтня):
+4. Move the held LinkedIn leads into the new channels, for every date that had
+   such leads (here 26 and 27 October):
    ```bash
    cd /opt/jobsearch-autopilot
    scripts/server/run_service.sh scripts/enqueue_leads.py <slug> --date 2026-10-26 --rechannel
    scripts/server/run_service.sh scripts/enqueue_leads.py <slug> --date 2026-10-27 --rechannel
    ```
-   Записи `failed` `--rechannel` не чіпає (такий лід міг уже піти: процес упав
-   посеред форми чи hand-off протух); їхні id у зведенні під `skipped_failed`,
-   розібрати руками.
-5. Перший прохід руками в денному вікні, коли профіль браузера вільний (не йде
-   `relogin.py`, MCP, чужий hand-off):
+   `--rechannel` does not touch `failed` records (such a lead may already have gone out: the process crashed
+   in the middle of a form or the hand-off expired); their ids are in the summary under `skipped_failed`,
+   sort them out by hand.
+5. First pass by hand in the daytime window, when the browser profile is free (no
+   `relogin.py`, MCP or someone else's hand-off running):
    ```bash
    DISPLAY=:99 /opt/jobsearch-autopilot/scripts/server/run_service.sh scripts/apply_leads.py <slug>
    ```
-   Прочитати рядок `APPLY OK: {...}`. Очікування: `resolved` для offsite-лідів,
-   `sent` для LinkedIn, якщо лід чистий, рядки в `queue_dry.jsonl` для
-   freelancermap і GULP (вони в `shadow`).
-6. Перевірити тіньові скріншоти
-   `var/run/packages_<дата>/<папка-ліда>/working/apply_form_filled.png` за
-   чеклістом нижче. Коли все правильно, перевести платформу в `on`: `/platform
-   freelancermap on` на оголошений `shadow` не діє, тож змінити в data-репо
-   `platforms: {..., freelancermap: on, ...}`, закомітити й запушити з Mac;
-   наступний прохід підхопить через `pull_data`. Те саме для GULP, окремо.
-7. Де дивитись:
+   Read the line `APPLY OK: {...}`. Expected: `resolved` for offsite leads,
+   `sent` for LinkedIn if the lead is clean, rows in `queue_dry.jsonl` for
+   freelancermap and GULP (they are in `shadow`).
+6. Check the shadow screenshots
+   `var/run/packages_<date>/<lead-folder>/working/apply_form_filled.png` against
+   the checklist below. When everything is right, switch the platform to `on`: `/platform
+   freelancermap on` has no effect on a declared `shadow`, so change in the data repo
+   `platforms: {..., freelancermap: on, ...}`, commit and push from the Mac;
+   the next pass picks it up via `pull_data`. The same for GULP, separately.
+7. Where to look:
    ```bash
    journalctl -u jobsearch-apply@<slug> -n 50
    cat /opt/jobsearch-clients/clients/<slug>/var/state/platforms.json
    ```
-   і `/status`, `/platform` у Telegram.
+   and `/status`, `/platform` in Telegram.
 
-### Чеклист першого живого проходу
+### Checklist for the first live pass
 
-Живцем не перевірено, дивитись очима, не довіряти зеленому статусу:
+Not verified live, look with your own eyes, do not trust a green status:
 
-- LinkedIn: у модалці Easy Apply вибраний саме щойно завантажений файл резюме
-  (radio з `aria-label` = ім'я файлу, а не збережене резюме; інакше
-  `resume_not_selected`); прапорець Follow компанії вимкнений (інакше
-  `follow_still_checked`); текст підтвердження після Submit збігся, а не впав у
-  `handoff` через тишу. У черзі: `sent` лише з рядком у трекері й квитанцією.
-  Відповіді на питання про роки досвіду беруться з `experience_years` у
-  `profile.yaml`; оператор підтверджує числа. Перша подача краща на лід, де
-  Follow видно на скріншоті.
-- freelancermap: після `set_input_files` код перевіряє лише `files.length`;
-  відрендерений список вкладень (DOM не захоплено) оцінити очима на
-  скріншоті: CV і Projektliste на місці. Лічильник «Restliche Bewerbungen für
-  diesen Monat: n/total» до і після першої живої подачі зменшився на одиницю.
-  Текст підтвердження живцем не бачено: невідомий текст буде `handoff`, не `sent`.
-- GULP: dry run файл CV не ставить, тож на тіньовому скріншоті поле CV порожнє,
-  і це норма. Ім'я файлу CV в iframe з'являється лише при живому проході; без
-  нього Submit не натискається (`handoff cv_upload_unconfirmed`). Текст
-  підтвердження не бачено ніколи (кнопку не натискали), тому перша жива подача
-  майже напевно піде в `handoff`: оператор доробляє й тисне «Подано».
-- LinkedIn: якщо перший результат `handoff no_easy_apply` або `held no_apply_link`,
-  підозрюй очікування сторінки, не лід: SPA під логіном могла не встигнути
-  відрендерити кнопку Apply за 15 с. Відкрити вакансію по VNC і подивитись.
-- Усі платформи: рядок у `queue.jsonl` має ключ `platform`, `/platform` показує
-  лічильник «подано сьогодні / ліміт», вкладки hand-off не зависли на профілі
-  (наступний прохід не стартує, поки вона відкрита).
+- LinkedIn: in the Easy Apply modal the just-uploaded CV file is the one selected
+  (radio with `aria-label` = the file name, not a saved CV; otherwise
+  `resume_not_selected`); the Follow company checkbox is off (otherwise
+  `follow_still_checked`); the confirmation text after Submit matched instead of falling into
+  `handoff` through silence. In the queue: `sent` only with a row in the tracker and a receipt.
+  Answers to questions about years of experience are taken from `experience_years` in
+  `profile.yaml`; the operator confirms the numbers. The first application is better on a lead where
+  Follow is visible on the screenshot.
+- freelancermap: after `set_input_files` the code checks only `files.length`;
+  the rendered attachment list (DOM not captured) must be judged by eye on the
+  screenshot: CV and Projektliste in place. The counter «Restliche Bewerbungen für
+  diesen Monat: n/total» before and after the first live application went down by one.
+  The confirmation text has not been seen live: unknown text will be `handoff`, not `sent`.
+- GULP: the dry run does not set the CV file, so on the shadow screenshot the CV field is empty,
+  and that is normal. The CV file name in the iframe appears only on a live pass; without
+  it Submit is not pressed (`handoff cv_upload_unconfirmed`). The confirmation
+  text has never been seen (the button was never pressed), so the first live application
+  will almost certainly go to `handoff`: the operator finishes it and presses «Submitted».
+- LinkedIn: if the first result is `handoff no_easy_apply` or `held no_apply_link`,
+  suspect the page wait, not the lead: the SPA behind the login may not have managed to
+  render the Apply button within 15 s. Open the vacancy over VNC and look.
+- All platforms: the row in `queue.jsonl` has the key `platform`, `/platform` shows
+  the counter «submitted today / limit», hand-off tabs are not stuck on the profile
+  (the next pass does not start while one is open).
 
-## Де дивитись, коли щось не так
+## Where to look when something is wrong
 
-| Що | Де |
+| What | Where |
 |---|---|
-| Лог рану | `<clients>/<slug>/var/logs/<mode>_<дата>.log` |
-| Проміжні файли | `<clients>/<slug>/var/run/` |
-| Повний транскрипт сесії Claude | `/root/.claude/projects/` (лог містить лише підсумок) |
-| Звіт cleanup | `var/run/cleanup_<дата>.json`; `unmatched: not_found` це норма |
+| Run log | `<clients>/<slug>/var/logs/<mode>_<date>.log` |
+| Intermediate files | `<clients>/<slug>/var/run/` |
+| Full transcript of the Claude session | `/root/.claude/projects/` (the log holds only the summary) |
+| Cleanup report | `var/run/cleanup_<date>.json`; `unmatched: not_found` is normal |
 
-Пошта оператору: один лист на добу, `[<Ім'я>: Tagesbericht]`, після вечірнього
-рану. Його збирає `scripts/server/operator_summary.py` без Claude: лічильники з
-трекера, звіт нічного рану з `var/run/operator_report_<дата>.html`, нотатка
-вечірнього рану і алерти з черги `var/run/alerts_pending.jsonl`. Уночі оператор
-пошти не отримує. Стан у будь-який момент, без листа:
+Mail to the operator: one mail per day, `[<Name>: Tagesbericht]`, after the evening
+run. `scripts/server/operator_summary.py` builds it without Claude: counters from
+the tracker, the night run's report from `var/run/operator_report_<date>.html`, the
+evening run's note and alerts from the queue `var/run/alerts_pending.jsonl`. At night the operator
+gets no mail. The state at any moment, without a mail:
 
 ```bash
 js scripts/server/operator_summary.py
 ```
 
-Алерт «немає маркера `MORNING OK`» означає, що агент не дійшов до кінця:
-дивитись хвіст лога. «Claude limit reached»: ран вперся в ліміт підписки,
-наступний піде за розкладом. «Engine-Pull fehlgeschlagen» або «Datenpull
-fehlgeschlagen»: репозиторій не підтягнувся, ран пройшов на локальному стані
-(трекери й конфіги могли бути застарілі); у листі `git status --short` того
-репозиторію. Типова причина: той самий файл створено і на сервері, і на Mac.
-Звірити `cmp` з `git show origin/main:<шлях>`, однакові файли прибрати в stash,
-далі `git pull --rebase`. Серверні зміни, що відрізняються, не викидати.
+The alert «no `MORNING OK` marker» means the agent did not reach the end:
+look at the tail of the log. «Claude limit reached»: the run hit the subscription limit,
+the next one goes on schedule. «Engine-Pull fehlgeschlagen» or «Datenpull
+fehlgeschlagen»: the repository did not pull, the run went on local state
+(trackers and configs may have been stale); the mail has `git status --short` of that
+repository. Typical cause: the same file was created both on the server and on the Mac.
+Compare with `cmp` against `git show origin/main:<path>`, put identical files into a stash,
+then `git pull --rebase`. Server changes that differ must not be thrown away.
 
-## Бекап
+## Backup
 
-Дані клієнтів у приватному репозиторії, сервер пушить після кожного ранку.
-На сервері унікальні лише `/root/.claude-env`, `~/.gmail-mcp` і
-`~/.playwright-mcp`. Втрата сервера означає повторні OAuth і логіни в портали
-по кожному клієнту, заявки й трекер при цьому цілі.
+Client data is in the private repository, the server pushes after every morning run.
+Unique to the server are only `/root/.claude-env`, `~/.gmail-mcp` and
+`~/.playwright-mcp`. Losing the server means repeating OAuth and portal logins
+for every client, applications and the tracker stay intact.

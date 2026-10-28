@@ -173,6 +173,49 @@ def _cell(text: str) -> str:
     return " ".join(str(text or "").replace("|", "/").split())
 
 
+def mark_ready_row_submitted(tracker_path: Path, *, company: str, position: str, status: str, date: str,
+                             notes: str) -> bool:
+    """Ринок найму: --batch-render уже дописав рядок «🔄 Файли готові…» чи «🌐 Portal: …»;
+    після подачі воркером цей рядок стає подачею, а не другий рядок поруч. Обидва формати
+    таблиці; збіг за компанією й схожою роллю; False, якщо такого рядка нема."""
+    from bot.ats import same_role
+    from bot.filters.rules import normalize_company
+    from bot.presend import READY_STATUS_RE
+
+    path = Path(tracker_path)
+    lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
+    want = normalize_company(company)
+    date_re = re.compile(r"^\d{4}-\d{2}-\d{2}")
+    for i, line in enumerate(lines):
+        if not line.startswith("|"):
+            continue
+        cells = line.split("|")
+        stripped = [c.strip() for c in cells]
+        legacy = len(cells) >= 6 and date_re.match(stripped[1]) is not None
+        main = not legacy and len(cells) >= 12 and date_re.match(stripped[2]) is not None
+        if legacy:   # | date | title | company, location | status |
+            hit = (READY_STATUS_RE.match(stripped[4]) and normalize_company(stripped[3].split(",")[0]) == want
+                   and same_role(position, stripped[2]))
+        elif main:   # | # | Date | Company | Position | Source | Salary | Status | Last update | Next | Notes |
+            hit = (READY_STATUS_RE.match(stripped[7]) and normalize_company(stripped[3]) == want
+                   and same_role(position, stripped[4]))
+        else:
+            hit = False
+        if not hit:
+            continue
+        if legacy:
+            urls = re.findall(r"https?://[^\s|)>\]]+", stripped[4])
+            keep = f" · {urls[0]}" if urls and urls[0] not in notes else ""
+            cells[4] = f" {status} ({date}){keep} · {notes} "
+        else:
+            cells[7], cells[8] = f" {status} ", f" {date} "
+            cells[10] = f" {notes} · {stripped[10]} " if stripped[10] else f" {notes} "
+        lines[i] = "|".join(cells)
+        path.write_text("".join(lines), encoding="utf-8")
+        return True
+    return False
+
+
 def append_row(tracker_path: Path, *, date: str, company: str, position: str, source: str, salary: str,
                status: str, next_action: str, notes: str) -> int:
     """Новий рядок головної таблиці одразу після останнього рядка з номером;

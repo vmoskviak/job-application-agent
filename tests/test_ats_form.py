@@ -12,6 +12,7 @@ import pytest
 from bot import client
 from bot.apply.ats_answers import AnswerContext
 from bot.apply.ats_detect import PROBE_JS
+from bot.apply import ats_form
 from bot.apply.ats_fields import FIELD_JS, FIELD_SELECTOR
 from bot.apply.ats_form import (
     POLL_MS,
@@ -27,7 +28,7 @@ from bot.apply.ats_form import (
 )
 
 GH_APPLY = 'a:has-text("Apply"), button:has-text("Apply")'
-ANY_APPLY = 'a[href*="application"], a[href$="/apply"], a:has-text("Apply"), button:has-text("Apply")'
+ANY_APPLY = ats_form.APPLY_SELECTOR
 FORM_READY = "input[type=file], form, input, textarea, select"
 PRE_SUBMIT = {"submit_visible": True, "challenge_visible": False, "invalid_count": 0, "error_texts": [], "text": "Apply for this job"}
 

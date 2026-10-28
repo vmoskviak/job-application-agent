@@ -1,41 +1,42 @@
-# Поштові акаунти й браузерний профіль. Токени тут НЕ лежать: лише назви
-# каталогів у ~/.gmail-mcp і ~/.playwright-mcp на машині запуску.
+# Mail accounts and browser profile. Tokens are NOT stored here: only the
+# names of the directories under ~/.gmail-mcp and ~/.playwright-mcp on the run machine.
 #
-# Стандартна схема — дві скриньки:
-#   jobs  окрема адреса під пошук: з неї йдуть заявки, на неї приходять
-#         job-алерти порталів; агент може видаляти оброблені алерти
-#   main  особиста адреса з CV: сюди відповідають роботодавці; агент лише
-#         читає й відповідає в тому ж треді.
-#         НЕ обов'язковий: якщо особиста скринька не на Gmail (GMX, Outlook),
-#         блок main прибрати цілком, у profile.yaml → email поставити адресу
-#         jobs. Роботодавці тоді відповідають на jobs, рушій це вміє.
+# Standard layout: two mailboxes:
+#   jobs  a separate address for the search: applications go out from it,
+#         portal job alerts arrive there; the agent may delete processed alerts
+#   main  the personal address from the CV: employers reply here; the agent only
+#         reads and replies in the same thread.
+#         NOT required: if the personal mailbox is not on Gmail (GMX, Outlook),
+#         remove the main block entirely and set profile.yaml -> email to the
+#         jobs address. Employers then reply to jobs, the engine handles that.
 gmail:
   jobs:
     address: ''
     creds_dir: __SLUG__-jobs
-    role: Відправка заявок, job-alerts
+    role: Sending applications, job alerts
     may_delete: true
   main:
     address: ''
     creds_dir: __SLUG__-main
-    role: Читання + відповіді роботодавцям у thread
+    role: Reading + replying to employers in thread
     may_delete: false
-    rescue_trash: false          # true, якщо власниця сама видаляє відповіді
+    rescue_trash: false          # true if the owner deletes replies herself
 send_from: jobs
-# Додаткові домени чи адреси, з яких відповідають роботодавці, якщо їх нема ні
-# в трекері, ні в пакетах заявок (подача через дошку, відповідь з домену групи).
-# employer_scan шукає їх разом із доменами ATS.
+# Extra domains or addresses employers reply from, if they appear neither in
+# the tracker nor in application packages (board submissions, replies from a group domain).
+# employer_scan searches them together with the ATS domains.
 employer_senders: []
 # - beispiel-gruppe.de
 playwright_profile: __SLUG__
-# Облікові дані порталів для автологіну (XING не тримає сесію між запусками).
-# Файл лише на машині запуску, chmod 600, у git не потрапляє:
+# Portal credentials for auto-login (XING does not keep a session between runs).
+# File lives only on the run machine, chmod 600, never in git:
 #   {"xing": {"username": "...", "password": "..."}}
 # portal_credentials: /root/.__SLUG__-portal-credentials.json
-# Telegram оператора. Токен лише в оточенні сервера (ім'я змінної тут).
-#   mode: cards  — власний бот клієнта з кнопками (контрактний ринок, етап 2a)
-#   mode: notify — спільний бот оператора, лише сповіщення про співбесіди й запити,
-#                  трекер веде ранковий агент; сервіс бота для клієнта не вмикати
+# Operator Telegram. The token lives only in the server environment (variable name here).
+#   mode: cards  - the client's own bot with buttons (contract market, phase 2a)
+#   mode: notify - the operator's shared bot, notifications about interviews and
+#                  requests only; the morning agent keeps the tracker; do not enable
+#                  the bot service for the client
 # telegram:
 #   token_env: JOBSEARCH_TELEGRAM_TOKEN_OPERATOR
 #   chat_id: 0

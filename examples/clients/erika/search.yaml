@@ -1,23 +1,23 @@
-# Вечірній пошук: що й де шукати. Рендериться в промпт evening-агента.
-# {year} у запиті підставляється поточним роком.
+# Evening search: what and where to search. Rendered into the evening agent's prompt.
+# {year} in a query is replaced with the current year.
 focus: >
-  Головна ціль — Office/Assistenz; Sachbearbeitung — підстраховка для обсягу.
+  Main target: Office/Assistenz; Sachbearbeitung as a fallback for volume.
 do_not_search: >
   Trainee, Senior/Lead, Vertrieb, Entwickler.
 query_groups:
-- name: Office/Assistenz (активна ціль)
+- name: Office/Assistenz (active target)
   queries:
   - '"Teamassistenz" OR "Office Manager" OR "Assistenz Geschäftsführung" Düsseldorf {year}'
   - '"Office Manager" OR "Teamassistenz" Düsseldorf site:linkedin.com/jobs {year}'
   - '"Assistenz" OR "Sekretariat" Düsseldorf Köln site:xing.com/jobs {year}'
-- name: Sachbearbeitung (підстраховка)
+- name: Sachbearbeitung (fallback)
   queries:
   - '"Sachbearbeitung" OR "Sachbearbeiter Verwaltung" NRW {year}'
 career_pages_keywords: Assistenz / Office Management / Sekretariat
 career_pages:
 - {name: Düsseldorf Stadt, url: 'https://karriere.duesseldorf.de/'}
-- {name: Interamt (öД), url: 'https://interamt.de/koop/app/trefferliste'}
-# необов'язкові блоки:
+- {name: Interamt (öD), url: 'https://interamt.de/koop/app/trefferliste'}
+# optional blocks:
 extra_sources: ''
 stepstone_facet: 'https://www.stepstone.de/jobs/in-duesseldorf?radius=50&di=Administration&sdi=250803&sdi=250846&sdi=250955'
 indeed_listings:

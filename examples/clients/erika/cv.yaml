@@ -1,9 +1,9 @@
-# Дані CV. Варіант CV обирається під трек (tracks.yaml → variant).
+# CV data. The CV variant is chosen per track (tracks.yaml -> variant).
 variants: [agile, ba, trainee, sachbearbeitung, buero, sprache]
 default_variant: agile
 experience:
-# bullets: список (однаковий для всіх варіантів) або мапа варіант → список;
-# ключ default — для варіантів без власних булітів.
+# bullets: a list (same for all variants) or a map variant -> list;
+# key default: for variants without their own bullets.
 - dates: 03.2021 – 12.2025
   company: Beispiel Logistik GmbH, Düsseldorf
   title: Teamassistentin
@@ -65,8 +65,8 @@ skills:
   sprache:
   - [Sprachen, Deutsch (Muttersprache) · Englisch (C1) · Französisch (B1)]
   - [Vermittlung, Abläufe verständlich erklären · schriftliche Aufbereitung]
-# Вкладення до email-заявки. variants — чіпляти лише до цих варіантів CV;
-# portal: true — файл іде також у портальні форми (коротка добірка).
+# Attachments for the email application. variants: attach only to these CV variants;
+# portal: true: the file also goes into portal forms (short selection).
 attachments:
 - file: 01_Zeugnis_BeispielLogistik_2025.pdf
   label: Arbeitszeugnis Beispiel Logistik GmbH (2025)

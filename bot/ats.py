@@ -377,10 +377,31 @@ def _host(url: str) -> str:
 
 
 def resolve_channel(entry: dict, fetch_html: Callable[[str], str | None],
-                    board: BoardClient) -> Resolution:
+                    board: BoardClient, market: str = "contract") -> Resolution:
     """Канал подачі ліда: email → відомий ATS → платформа з логіном → LinkedIn
-    (Easy Apply, пошук дошки, інакше linkedin_offsite) → пошук дошки для решти хостів."""
+    (Easy Apply, пошук дошки, інакше linkedin_offsite) → пошук дошки для решти хостів.
+
+    Ринок найму (de_employment): невідомий хост роботодавця це форма для загального
+    драйвера (form без ATS), а не none; дошки Ashby/Greenhouse у німецьких фірм
+    рідкість, тож пошук дошки там не робиться. application_url з оголошення
+    переважає source_url."""
     url = entry.get("source_url") or ""
+    if market == "de_employment":
+        apply_url = entry.get("application_url") or url
+        if entry.get("email"):
+            return Resolution("email", apply_url, None, "email address in posting")
+        ats = ats_from_url(apply_url)
+        if ats:
+            return Resolution("form", apply_url, ats, f"{ats} url")
+        host = _host(apply_url)
+        if "linkedin.com" in host:
+            kind = linkedin_apply_kind(fetch_html(apply_url) or "")
+            if kind == "onsite":
+                return Resolution("linkedin_easy", apply_url, None, "linkedin easy apply")
+            return Resolution("linkedin_offsite", apply_url, None, f"linkedin {kind}, employer site unknown")
+        if any(host == h or host.endswith("." + h) for h in PLATFORM_LOGIN_HOSTS):
+            return Resolution("platform_login", apply_url, None, f"platform {host}")
+        return Resolution("form", apply_url, None, f"employer site {host}, generic form")
     company, title = entry.get("company") or "", entry.get("title") or ""
     location = entry.get("location") or ""
     if entry.get("email"):

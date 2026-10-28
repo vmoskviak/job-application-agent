@@ -1,35 +1,35 @@
-# Фільтри відбору вакансій.
+# Job selection filters.
 min_score: 25
-max_submissions_per_run: 25      # аварійний запобіжник: більше = збій фільтра
-cleanup_min_tracker_rows: 0      # підняти, коли трекер виросте (захист від битого парсингу)
-# Регулярні вирази по назві ролі: на таке не подаємось ніколи.
+max_submissions_per_run: 25      # emergency brake: more than this = a filter failure
+cleanup_min_tracker_rows: 0      # raise once the tracker grows (protection against broken parsing)
+# Regular expressions over the role title: never apply to these.
 excluded_title_patterns:
 - '\bsenior\b'
 - '\b(?:team\s*)?lead\b'
 - '\bpraktik(?:um|ant)'
 - '\bausbildung\b'
 - '\bwerkstudent'
-# Ознаки в тексті вакансії (назва + опис), регулярні вирази без урахування
-# регістру. Для умов, яких у назві ролі не буває: Teilzeit, Homeoffice-Anteil.
-#   description_bonus: бал додається до score вакансії (вище в черзі подачі)
-#   excluded_description_patterns: збіг pattern без збігу unless = не подаємось
+# Signals in the job text (title + description), case-insensitive regular
+# expressions. For conditions that never appear in the title: Teilzeit, Homeoffice share.
+#   description_bonus: points added to the job score (higher in the submission queue)
+#   excluded_description_patterns: pattern matches without an unless match = do not apply
 description_bonus: []
 # - {pattern: 'teilzeit|wochenstunden', points: 30}
 excluded_description_patterns: []
 # - {pattern: '\bvollzeit\b', unless: 'teilzeit|wochenstunden'}
-# Компанії, що приймають заявки лише через портал (email видаляють).
+# Companies that accept applications only via portal (they delete emails).
 email_dead_companies: []
-# Досяжні міста/регіони, lowercase, усі написання (умлаути й без, англійська
-# назва землі для LinkedIn). Remote/Home-Office/Hybrid проходять самі.
+# Reachable cities/regions, lowercase, every spelling (with and without umlauts,
+# English name of the state for LinkedIn). Remote/Home-Office/Hybrid pass on their own.
 region_label: ''
 locations: []
-# any: будь-яка згадка remote/Homeoffice/hybrid рятує чуже місто.
-# full: лише повністю віддалена робота (пошук в одному місті через дорогу).
+# any: any mention of remote/Homeoffice/hybrid rescues a foreign city.
+# full: only fully remote work (search in one city because of the commute).
 remote_policy: any
-# Контрактний ринок, етап 2b: файли з attachments/, які німецькі агентури
-# отримують поверх CV (Projektliste). Порожньо = лише CV.
+# Contract market, phase 2b: files from attachments/ that German agencies
+# receive on top of the CV (Projektliste). Empty = CV only.
 # agency_attachments: []
-# Контрактний ринок, етап 2b: send_policy auto = подачі йдуть без кнопки оператора;
-# daily_limits = скільки подач на день на канал (дефолт email 5, form 5).
+# Contract market, phase 2b: send_policy auto = submissions go out without the operator's button;
+# daily_limits = how many submissions per day per channel (default email 5, form 5).
 # send_policy: auto
 # daily_limits: {email: 5, form: 5}

@@ -3,6 +3,8 @@
 
     js scripts/enqueue_leads.py --date YYYY-MM-DD [--filtered PATH] [--notes DIR]
     js scripts/enqueue_leads.py --date YYYY-MM-DD --rechannel
+    js scripts/enqueue_leads.py --date YYYY-MM-DD            (ринок найму: manual_link-ліди
+                                                            з пакетами applications/<дата>/)
 
 Для кожного selected з var/run/filtered_<дата>.json, що має нотатку в
 var/run/notes_<дата>/<slug>.txt: канал подачі (bot.ats, без логіну LinkedIn),
@@ -31,7 +33,7 @@ sys.path.insert(0, str(ENGINE))
 from bot import client as _client
 from bot.ats import BoardClient, HttpxBoardClient, resolve_channel
 from bot.generators.cover_note import _agency_match, build_note, note_language, slugged
-from bot.packages import SKIPPED_FILE, build_packages, load_packages
+from bot.packages import SKIPPED_FILE, Package, build_packages, load_packages
 from bot.platforms import declared
 from bot.presend import check_package
 from bot.sendqueue import APPLICATION_STATUSES, QUEUE_FILE, enqueue, lead_id
@@ -118,6 +120,108 @@ def rechannel(c: _client.Client, date: str, run_dir: Path, fetch: Callable[[str]
             "skipped_failed": skipped_failed}
 
 
+# ── Ринок найму: пакети вже відрендерив --batch-render у applications/<дата>/ ──
+
+def _folder_stem(company: str, title: str) -> str:
+    """Та сама назва папки, що в new_app.make_folder_name (без імпорту new_app: він читає клієнта)."""
+    import re
+
+    def clean(text: str) -> str:
+        text = re.sub(r"\s*\(m/w/d\)\s*", "", text or "", flags=re.IGNORECASE)
+        return re.sub(r"[^a-zA-Z0-9äöüÄÖÜß]", "", text)[:25].strip()
+    return f"{clean(company)}_{clean(title)}"
+
+
+def find_application_dir(day_dir: Path, entry: dict) -> Path | None:
+    """Папка пакета ліда: за Source-рядком working/job_description.txt, інакше за назвою папки."""
+    from bot.filters.rules import normalize_url
+
+    if not Path(day_dir).is_dir():
+        return None
+    want = normalize_url(entry.get("source_url") or "")
+    dirs = sorted(d for d in Path(day_dir).iterdir() if d.is_dir())
+    if want:
+        for d in dirs:
+            jd = d / "working" / "job_description.txt"
+            if jd.exists():
+                first = jd.read_text(encoding="utf-8", errors="ignore").splitlines()[:1]
+                if first and first[0].startswith("Source:") and normalize_url(first[0][7:].strip()) == want:
+                    return d
+    stem = _folder_stem(entry.get("company") or "", entry.get("title") or "")
+    return next((d for d in dirs if d.name == stem or d.name.startswith(stem + "_v")), None)
+
+
+def employment_attachments(app_dir: Path, cv_cfg: dict, attachments_dir: Path) -> list[Path]:
+    """CV, Anschreiben з to_send/ і Zeugnisse з cv.yaml → attachments (portal: true)."""
+    to_send = Path(app_dir) / "to_send"
+    out = sorted(to_send.glob("*_CV.pdf")) + sorted(to_send.glob("*Anschreiben*.pdf"))
+    for a in (cv_cfg or {}).get("attachments") or []:
+        if isinstance(a, dict) and a.get("portal") and a.get("file"):
+            out.append(Path(attachments_dir) / str(a["file"]))
+    return out
+
+
+def batch_notes(paths: list[Path]) -> dict[tuple[str, str], str]:
+    """Anschreiben з batch_<дата>.json за (компанія, посада): текст для поля «Anschreiben» у формі."""
+    from bot.filters.rules import normalize_company
+
+    out: dict[tuple[str, str], str] = {}
+    for path in paths:
+        if not Path(path).exists():
+            continue
+        try:
+            items = json.loads(Path(path).read_text(encoding="utf-8"))
+        except ValueError:
+            continue
+        for it in items if isinstance(items, list) else []:
+            job, tailored = it.get("job") or {}, it.get("tailored") or {}
+            key = (normalize_company(job.get("company") or ""), (job.get("title") or "").strip().lower())
+            if tailored.get("anschreiben"):
+                out[key] = str(tailored["anschreiben"])
+    return out
+
+
+def run_employment(c: _client.Client, date: str, filtered: list[Path], batches: list[Path], applications_dir: Path,
+                   attachments_dir: Path, fetch: Callable[[str], str | None], today_text: str) -> dict:
+    """Ліди manual_link ринку найму → черга воркера (apply_leads) з пакетами з applications/<дата>/.
+    Канал: resolve_channel(market=de_employment). StepStone/XING/Interamt сюди не йдуть, їх веде runner."""
+    from bot.filters.rules import normalize_company
+
+    selected: list[dict] = []
+    for path in filtered:
+        if Path(path).exists():
+            selected.extend(e for e in _selected(Path(path)) if e.get("apply_channel") == "manual_link")
+    notes = batch_notes(batches)
+    store = JsonlStore(state_dir(c.var) / QUEUE_FILE)
+    existing = {r.get("id") for r in store.read()}
+    check = _checker(c, list(c.targeting.get("agencies_de") or []))
+    queued: dict[str, int] = {}
+    held: list[dict] = []
+    skipped: list[dict] = []
+    created = today_text
+    for slug, entry in slugged(selected):
+        app_dir = find_application_dir(Path(applications_dir) / date, entry)
+        if app_dir is None:
+            skipped.append({"slug": slug, "reason": "no_package"})
+            continue
+        res = resolve_channel(entry, fetch, HttpxBoardClient(), market="de_employment")
+        attachments = employment_attachments(app_dir, c.cv, attachments_dir)
+        note = notes.get((normalize_company(entry.get("company") or ""), (entry.get("title") or "").strip().lower()), "")
+        lead = {**entry, "channel": res.channel, "apply_url": res.apply_url, "ats": res.ats,
+                "resolver_note": res.note, "board_workplace": None, "board_location": None}
+        (app_dir / "lead.json").write_text(json.dumps(lead, ensure_ascii=False, indent=1), encoding="utf-8")
+        (app_dir / "note.txt").write_text(note + "\n", encoding="utf-8")
+        (app_dir / "meta.json").write_text(json.dumps(
+            {"slug": slug, "lang": "de", "subject": "", "attachments": [str(p) for p in attachments],
+             "created": created}, ensure_ascii=False, indent=1), encoding="utf-8")
+        pkg = Package(slug, app_dir, lead, res.channel, res.apply_url, res.ats, "de", "", note, attachments)
+        rec = enqueue(store, pkg, check(pkg, "de"), date, today_text)
+        if rec["id"] not in existing:
+            _count(rec, slug, queued, held)
+    return {"date": date, "packages": len(selected) - len(skipped), "queued": queued, "held": held,
+            "skipped": skipped}
+
+
 def _checker(c: _client.Client, agencies: list[str]) -> Callable[..., list[str]]:
     """check_package з параметрами клієнта; лишаються пакет і очікувана мова."""
     hourly_min = (c.profile.get("rate") or {}).get("hourly_min")
@@ -156,6 +260,19 @@ def main(argv: list[str] | None = None) -> int:
     if args.rechannel:
         print(json.dumps(rechannel(c, args.date, c.run_dir, fetch_html, HttpxBoardClient(), now),
                          ensure_ascii=False))
+        return 0
+    if c.market == "de_employment":
+        import datetime as _dt
+
+        prev = (_dt.date.fromisoformat(args.date) - _dt.timedelta(days=1)).isoformat()
+        # вечірній batch (учора) і нічні алерти (сьогодні) рендеряться в один ранок
+        filtered_paths = [args.filtered] if args.filtered else [
+            c.run_dir / f"filtered_{prev}.json", c.run_dir / f"filtered_alerts_{args.date}.json",
+            c.run_dir / f"filtered_{args.date}.json"]
+        batches = [c.run_dir / f"batch_{prev}.json", c.run_dir / f"batch_alerts_{args.date}.json",
+                   c.run_dir / f"batch_{args.date}.json"]
+        out = run_employment(c, args.date, filtered_paths, batches, c.applications, c.attachments, fetch_html, now)
+        print(json.dumps(out, ensure_ascii=False))
         return 0
     filtered = args.filtered or c.run_dir / f"filtered_{args.date}.json"
     notes = args.notes or c.run_dir / f"notes_{args.date}"
