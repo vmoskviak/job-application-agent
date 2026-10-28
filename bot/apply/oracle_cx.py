@@ -1,6 +1,6 @@
 """Oracle CX Recruiting (Candidate Experience) auto-apply flow.
 
-Перша інстанція — портал страховика (<host>/de/sites/<SITE>/job/<id>).
+URL виду <host>/<lang>/sites/<SITE>/job/<id>: кожен роботодавець має свій хост.
 Флоу без акаунта: Bewerben → email → Oracle шле 6-значний Verifizierungscode
 на пошту кандидата → верифікація → анкета (CV upload + поля) → submit.
 
@@ -19,6 +19,7 @@ import importlib.util
 import re
 import time
 from pathlib import Path
+from urllib.parse import urlparse
 
 from bot.apply import candidate, forms
 from bot.apply.models import ApplyResult
@@ -62,7 +63,18 @@ _CONFIRMATION_HINTS = (
     "danke für deine bewerbung",
 )
 
-_CODE_QUERY = "newer_than:1h (subject:verifizierungscode OR subject:verification)"
+_CODE_SUBJECTS = "subject:verifizierungscode OR subject:verification"
+
+
+def _code_query(url: str) -> str:
+    """Gmail-запит на лист із кодом. Oracle шле його з домену роботодавця, тож
+    `from:` береться з хоста вакансії (jobs.firma.de → firma); тема як запасний
+    критерій, бо шаблон листа залежить від інстанції."""
+    host = urlparse(url).hostname or ""
+    labels = [p for p in host.split(".") if p]
+    sender = labels[-2] if len(labels) >= 2 else ""
+    sender_part = f"from:{sender} OR " if sender else ""
+    return f"newer_than:1h ({sender_part}{_CODE_SUBJECTS})"
 _CODE_POLL_SEC = 150
 _CODE_RESEND_AFTER_SEC = 45
 
@@ -106,7 +118,7 @@ def _msg_text(gm, msg_id: str) -> str:
     return "\n".join(chunks) or msg.get("snippet", "")
 
 
-def _poll_verification_code(page, started_at_ms: int) -> str | None:
+def _poll_verification_code(page, started_at_ms: int, url: str) -> str | None:
     """Чекає СВІЖИЙ код (internalDate > старту флоу); за потреби тисне
     «Neuen Code senden». Старі коди в інбоксі ігноруються."""
     gm = _gmail()
@@ -116,7 +128,7 @@ def _poll_verification_code(page, started_at_ms: int) -> str | None:
         try:
             acc = _code_account()
             res = gm.api(acc, "GET", "messages",
-                         params={"q": _CODE_QUERY, "maxResults": 5})
+                         params={"q": _code_query(url), "maxResults": 5})
             for m in res.get("messages", []):
                 meta = gm.api(acc, "GET", f"messages/{m['id']}",
                               params={"format": "minimal"})
@@ -262,7 +274,7 @@ def apply(page, url: str, app_dir: Path, attachments: list[Path], dry_run: bool,
         body = ""
     if "verifizierungscode" in body or "identität bestätigen" in body:
         forms.screenshot(page, app_dir, "apply_verify_step.png")
-        code = _poll_verification_code(page, started_at_ms)
+        code = _poll_verification_code(page, started_at_ms, url)
         if not code:
             shot = forms.screenshot(page, app_dir, "apply_verify_timeout.png")
             return ApplyResult("failed", "oracle_cx", url, [shot],

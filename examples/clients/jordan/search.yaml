@@ -1,0 +1,19 @@
+# Пошук контрактів: що й де шукати. {year} підставляється поточним роком.
+focus: >
+  Remote B2B-контракти: Android/Kotlin і AI-агенти.
+do_not_search: >
+  Junior, iOS-only, штатні посади.
+query_groups:
+- name: Android контракт
+  queries:
+  - '"Android" "contract" remote Kotlin {year}'
+- name: AI контракт
+  queries:
+  - '"LLM" OR "AI agent" contract remote {year}'
+career_pages_keywords: Android / Kotlin / LLM
+career_pages: []
+extra_sources: ''
+# Джерела контрактного ринку: вечірній промпт вмикає кроки за enabled.
+sources:
+  hn_whoishiring: {enabled: true}
+  freelancermap_alerts: {enabled: true, channel: email, sender: freelancermap.de}   # відправник алертів у Gmail

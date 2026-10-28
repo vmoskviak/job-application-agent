@@ -3,6 +3,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+from bot.filters import rules
 from bot.filters.rules import (
     apply_rules, classify_channel, dedup_against_tracker, location_ok,
     normalize_company, parse_tracker_applications, title_excluded, titles_similar,
@@ -181,12 +182,13 @@ def test_classify_channel():
 
 def test_email_dead_companies_blocked():
     from bot.filters.rules import email_channel_blocked
-    # 28.07: Beispielwerk і Alpenwerk видаляють email-вкладення (DSGVO), лише портал
+    # email_dead_companies з targeting.yaml: ці роботодавці видаляють
+    # email-вкладення (DSGVO), лишається лише портал
     assert email_channel_blocked("Beispielwerk GmbH Wirtschaftsprüfungsgesellschaft")
     assert email_channel_blocked("Beispielwerk Business Services GmbH")
-    assert email_channel_blocked("Alpenwerk Konzern AG")
+    assert email_channel_blocked("Nordlicht Konzern AG")
     # токен-матч, не підрядок: інші компанії не зачеплені
-    assert not email_channel_blocked("Alpenwerkstatt GmbH")
+    assert not email_channel_blocked("Nordlichter GmbH")
     assert not email_channel_blocked("Beispiel digital GmbH")
     assert not email_channel_blocked("")
 
@@ -194,13 +196,13 @@ def test_email_dead_companies_blocked():
 def test_classify_channel_email_dead_company_falls_through():
     # email є, але компанія портал-only → канал НЕ email
     entry = {
-        "email": "bewerbung@beispielwerk.de",
+        "email": "bewerbung@beispielwerk.example",
         "company": "Beispielwerk Consulting GmbH",
         "source_url": "https://www.stepstone.de/stelle/x",
     }
     assert classify_channel(entry) == "stepstone_auto"
-    entry["source_url"] = "https://careers.versa.example/job/1"
-    entry["company"] = "Alpenwerk Versicherung AG"
+    entry["source_url"] = "https://careers.nordlicht.example/job/1"
+    entry["company"] = "Nordlicht Versicherung AG"
     assert classify_channel(entry) == "manual_link"
 
 
@@ -210,9 +212,9 @@ TRACKER_SAMPLE = """\
 | # | Date | Company | Position | Source | Salary range | Status | Last update | Next action | Notes |
 |---|---|---|---|---|---|---|---|---|---|
 | 65 | 2026-05-20 | Beispiel digital GmbH | Scrum Master (m/w/d) | Portal | — | sent | 2026-05-20 | — | Köln |
-| 45 | 2026-05-17 | Personaldienst AG (Kundenunternehmen Düsseldorf) | Assistenz (m/w/d) | Direct | ~40K | sent | 2026-05-17 | — | B4 |
+| 45 | 2026-05-17 | DIS AG (Kundenunternehmen Düsseldorf) | Assistenz (m/w/d) | Direct | ~40K | sent | 2026-05-17 | — | B4 |
 
-| 2026-05-16 | Teamassistenz im Projektmanagement (m/w/d) | Planwerk Beratende Ingenieure GmbH, Düsseldorf | ✅ Email sent |
+| 2026-05-16 | Teamassistenz im Projektmanagement (m/w/d) | SOMMER Beratende Ingenieure GmbH, Düsseldorf | ✅ Email sent |
 """
 
 
@@ -223,19 +225,19 @@ def test_normalize_company_strips_legal_forms():
 
 def test_normalize_company_strips_markdown_link():
     # Firecrawl-markdown Indeed віддає компанію лінком на /cmp/-сторінку;
-    # без чистки dedup проти трекера сліпне (регресія 28.07: St. Beispiel).
-    md = "[St. Beispiel Gruppe GmbH](https://de.indeed.com/cmp/St.-Beispiel-Gruppe-Gmbh?campaignid=mobvjcmp)"
-    assert normalize_company(md) == normalize_company("St. Beispiel Gruppe")
+    # без чистки dedup проти трекера сліпне (регресія 28.07: St. Elisabeth).
+    md = "[St. Elisabeth Gruppe GmbH](https://de.indeed.com/cmp/St.-Elisabeth-Gruppe-Gmbh?campaignid=mobvjcmp)"
+    assert normalize_company(md) == normalize_company("St. Elisabeth Gruppe")
 
 
 def test_dedup_blocks_markdown_company_against_tracker(tmp_path):
     tracker = tmp_path / "tracker.md"
     tracker.write_text(
-        "| 1 | 2026-07-28 | St. Beispiel Gruppe GmbH | Assistenz der Geschäftsleitung (m/w/d) | Portal | — | ready | — | — | — |\n",
+        "| 1 | 2026-07-28 | St. Elisabeth Gruppe GmbH | Assistenz der Geschäftsleitung (m/w/d) | Portal | — | ready | — | — | — |\n",
         encoding="utf-8",
     )
     entries = [{
-        "company": "[St. Beispiel Gruppe GmbH](https://de.indeed.com/cmp/St.-Beispiel-Gruppe-Gmbh)",
+        "company": "[St. Elisabeth Gruppe GmbH](https://de.indeed.com/cmp/St.-Elisabeth-Gruppe-Gmbh)",
         "title": "Assistenz der Geschäftsleitung (m/w/d)",
     }]
     fresh, dupes = dedup_against_tracker(entries, tracker)
@@ -266,7 +268,7 @@ def test_parse_tracker_both_formats(tmp_path):
     apps = parse_tracker_applications(tracker)
     companies = {a["company"] for a in apps}
     assert "Beispiel digital GmbH" in companies
-    assert "Planwerk Beratende Ingenieure GmbH" in companies
+    assert "SOMMER Beratende Ingenieure GmbH" in companies
 
 
 def test_dedup_blocks_same_company_similar_title(tmp_path):
@@ -284,7 +286,7 @@ def test_dedup_blocks_same_company_similar_title(tmp_path):
 def test_dedup_allows_same_company_different_role(tmp_path):
     tracker = tmp_path / "tracker.md"
     tracker.write_text(TRACKER_SAMPLE, encoding="utf-8")
-    entries = [{"company": "Personaldienst AG", "title": "Junior Budgetanalyst (m/w/d)"}]
+    entries = [{"company": "DIS AG", "title": "Junior Budgetanalyst (m/w/d)"}]
     fresh, dupes = dedup_against_tracker(entries, tracker)
     assert len(fresh) == 1 and not dupes
 
@@ -405,10 +407,11 @@ def test_description_bonus_counts_each_rule_once():
 
 def test_description_excluded_respects_unless():
     from bot.filters.rules import description_excluded
-    assert description_excluded({"title": "Assistenz", "description": "Vollzeit, 40 Std."}, _VZ)
-    assert not description_excluded(
-        {"title": "Assistenz", "description": "Vollzeit oder Teilzeit möglich"}, _VZ)
-    assert not description_excluded({"title": "Assistenz", "description": "unbefristet"}, _VZ)
+    # повертає reason ("" для правила без reason) або None, тому `is not None`
+    assert description_excluded({"title": "Assistenz", "description": "Vollzeit, 40 Std."}, _VZ) is not None
+    assert description_excluded(
+        {"title": "Assistenz", "description": "Vollzeit oder Teilzeit möglich"}, _VZ) is None
+    assert description_excluded({"title": "Assistenz", "description": "unbefristet"}, _VZ) is None
 
 
 def test_apply_rules_uses_description_patterns(tmp_path, monkeypatch):
@@ -449,11 +452,11 @@ def test_apply_rules_dedups_same_job_within_run(tmp_path):
     tracker = tmp_path / "tracker.md"
     tracker.write_text("| # | Дата | Компанія | Позиція |\n|---|---|---|---|\n")
     digest = [
-        {"title": "Kaufmännische Sachbearbeitung / Backoffice Service (m/w/d)", "company": "Kühler & Söhne GmbH Lüftung Klima Kälte",
+        {"title": "Kaufmännische Sachbearbeitung / Backoffice Service (m/w/d)", "company": "Musterbau & Söhne GmbH Lüftung Klima Kälte",
          "location": "Düsseldorf", "description": "", "score": 67, "category": "A1", "source_url": "https://x.example/1"},
-        {"title": "Jobangebot: Kaufmännische Sachbearbeitung / Backoffice Service", "company": "KÜHLER & SÖHNE GmbH",
+        {"title": "Jobangebot: Kaufmännische Sachbearbeitung / Backoffice Service", "company": "MUSTERBAU & SÖHNE GmbH",
          "location": "Düsseldorf", "description": "", "score": 37, "category": "A1", "source_url": "https://x.example/2"},
-        {"title": "Empfang / Office Management (m/w/d)", "company": "Kühler & Söhne GmbH",
+        {"title": "Empfang / Office Management (m/w/d)", "company": "Musterbau & Söhne GmbH",
          "location": "Düsseldorf", "description": "", "score": 50, "category": "A1", "source_url": "https://x.example/3"},
     ]
     res = rules.apply_rules(digest, tracker, min_score=25)
@@ -471,7 +474,7 @@ def test_soft_hyphens_do_not_hide_exclusions():
     assert strip_invisible(shy) == "Arbeitnehmerüberlassung"
     rules = [{"pattern": r"arbeitnehmerüberlassung"}]
     entry = {"title": "Empfang (m/w/d)", "description": f"Stelle im Rahmen der {shy}"}
-    assert description_excluded(entry, rules)
+    assert description_excluded(entry, rules) is not None
     job = parse_text(f"# Bü\u00adro\u00adas\u00adsis\u00adtenz (m/w/d)\nMuster GmbH\nKöln\n{shy}", "https://example.com/j/1")
     assert "\u00ad" not in job.title and "\u00ad" not in job.description
 
@@ -499,3 +502,75 @@ def test_dedup_matches_source_url_when_company_unknown(tmp_path):
     fresh, dupes = dedup_against_tracker(entries, tracker)
     assert [d["source_url"] for d in dupes] == [entries[0]["source_url"], entries[1]["source_url"]]
     assert fresh == [entries[2]]
+
+
+# ── іменовані причини виключення ──────────────────────────────────────────────
+
+def test_erika_reason_unchanged(tmp_path, monkeypatch):
+    # У erika/targeting.yaml нема excluded_description_patterns: правило без
+    # reason підставляємо так само, як test_apply_rules_uses_description_patterns.
+    monkeypatch.setattr(rules, "EXCLUDED_DESCRIPTION_PATTERNS", [{"pattern": r"\bleiharbeit\b"}])
+    entry = {"title": "Sachbearbeiterin", "company": "X", "description": "Leiharbeit", "score": 90}
+    out = rules.apply_rules([entry], tmp_path / "tracker.md")
+    assert out["excluded"] and out["excluded"][0]["reason"] == "excluded_description"
+
+
+def test_named_reason_suffix(tmp_path):
+    rule = [{"pattern": r"\bW-?2\b", "reason": "employee_only"}]
+    assert rules.description_excluded({"title": "", "description": "W-2 only"}, rule) == "employee_only"
+
+
+_INDEED_MD = (
+    "Suchen\n\n##### Teamassistenz (m/w/d)\n\n"
+    "[Muster Beratung GmbH](https://de.indeed.com/cmp/Muster-Beratung?fromjk=0c0c0c0c0c0c0c01)\n\n"
+    "Düsseldorf\n\nTeilzeit\n\n#### Stellenbeschreibung\n\n"
+    "Sie unterstützen das Team als Assistenz im Büro, organisieren Termine und Reisen."
+)
+
+
+def test_apply_rules_recovers_indeed_title_from_description(tmp_path):
+    """22.10.2026: 28 з 33 Indeed-записів одного клієнта з назвою «Suchen»
+    відпали як scrape_failed_title, хоча опис був цілий."""
+    tracker = tmp_path / "tracker.md"
+    tracker.write_text("", encoding="utf-8")
+    digest = [_entry(title="Suchen", company="##### Teamassistenz (m/w/d)", score=0,
+                     source_url="https://de.indeed.com/viewjob?jk=0c0c0c0c0c0c0c01",
+                     description=_INDEED_MD)]
+    result = apply_rules(digest, tracker, min_score=0)
+    assert [e["title"] for e in result["selected"]] == ["Teamassistenz (m/w/d)"]
+    sel = result["selected"][0]
+    assert sel["company"] == "Muster Beratung GmbH"
+    assert sel["title_recovered_from"] == "Suchen"
+    assert sel["score"] > 0  # перерахований по справжній назві
+
+
+def test_apply_rules_recovered_title_still_dedups_against_tracker(tmp_path):
+    tracker = tmp_path / "tracker.md"
+    tracker.write_text(
+        "| # | Datum | Firma | Position | Status |\n|---|---|---|---|---|\n"
+        "| 1 | 2026-10-20 | Muster Beratung GmbH | Teamassistenz (m/w/d) | Beworben |\n",
+        encoding="utf-8")
+    digest = [_entry(title="Suchen", company="Unbekannt", description=_INDEED_MD,
+                     source_url="https://de.indeed.com/viewjob?jk=0c0c0c0c0c0c0c02")]
+    result = apply_rules(digest, tracker, min_score=0)
+    assert not result["selected"]
+    assert result["excluded"][0]["reason"] == "duplicate_in_tracker"
+
+
+def test_apply_rules_unrecoverable_and_expired_entries(tmp_path):
+    tracker = tmp_path / "tracker.md"
+    tracker.write_text("", encoding="utf-8")
+    digest = [
+        # справжній збій: опис без назви — guard лишається
+        _entry(title="Suchen", description="Suchen\nJobs finden\nAnmelden\n",
+               source_url="https://de.indeed.com/viewjob?jk=0c0c0c0c0c0c0c03"),
+        # банер «abgelaufen» над назвою: назву відновлено, вакансія закрита
+        _entry(title="Suchen", company="Muster Bau GmbH",
+               description="Suchen\n\n### Diese Stellenanzeige ist auf Indeed abgelaufen\n\n"
+                           "##### Bürokraft (m/w/d)\n\nMuster Bau GmbH\n\nKöln\n",
+               source_url="https://de.indeed.com/viewjob?jk=0c0c0c0c0c0c0c04"),
+    ]
+    result = apply_rules(digest, tracker, min_score=0)
+    assert not result["selected"]
+    assert [(e["title"], e["reason"]) for e in result["excluded"]] == [
+        ("Suchen", "scrape_failed_title"), ("Bürokraft (m/w/d)", "closed")]

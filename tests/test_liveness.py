@@ -5,9 +5,9 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from bot.scrapers.liveness import check_liveness, is_login_wall
 
 
-def test_closed_careers_portal_pattern():
+def test_closed_bereits_besetzt_pattern():
     text = "Diese Stelle wurde leider bereits besetzt. Vielen Dank für Ihr Interesse."
-    status, reason = check_liveness(text, "https://careers.example.com/job/123")
+    status, reason = check_liveness(text, "https://careers.beispielwerk.example/job/123")
     assert status == "closed"
     assert "besetzt" in reason.lower()
 
@@ -26,7 +26,7 @@ def test_blocked_linkedin_login():
 
 
 def test_live_job_has_substance():
-    text = "Teamassistenz (m/w/d)\nBeispiel TechnikService GmbH\nErkrath\n" + ("Aufgaben " * 50)
+    text = "Teamassistenz (m/w/d)\nTSP TechnikServicePlus GmbH\nErkrath\n" + ("Aufgaben " * 50)
     status, _ = check_liveness(text, "https://www.stepstone.de/stellenangebote--test--10000004-inline.html")
     assert status == "live"
 
@@ -45,7 +45,7 @@ def test_live_despite_ref_number_404_in_list():
         + "\n"
         + ("Aufgaben Koordination Büro " * 30)
     )
-    status, _ = check_liveness(text, "https://www.muster-partner.example/jobs.php?refnr=345641")
+    status, _ = check_liveness(text, "https://www.musterbau.example/jobs.php?refnr=100405")
     assert status == "live"
 
 
@@ -67,3 +67,13 @@ def test_closed_linkedin_abgelaufen():
     status, reason = check_liveness(text, "https://de.linkedin.com/jobs/view/x-at-y-1000000008")
     assert status == "closed"
     assert "abgelaufen" in reason
+
+
+def test_closed_indeed_expired_banner_and_xing_missing():
+    from bot.scrapers.liveness import check_liveness
+    status, _ = check_liveness("Suchen\nDiese Stellenanzeige ist auf Indeed abgelaufen\n" + "x " * 300,
+                               "https://de.indeed.com/viewjob?jk=1")
+    assert status == "closed"
+    status, _ = check_liveness("Jobs finden\nDieses Stellenangebot existiert nicht.\nÄhnliche Jobs\n" + "x " * 300,
+                               "https://www.xing.com/jobs/koeln-assistenz-1")
+    assert status == "closed"

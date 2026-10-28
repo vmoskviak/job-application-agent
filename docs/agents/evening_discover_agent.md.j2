@@ -137,7 +137,11 @@ Body німецькою: (1) selected з каналом (`email` / `stepstone_au
 
 Відправляти як **HTML** (`mimeType: "multipart/alternative"`, `body` — plain-text фолбек) за шаблоном з `morning_apply_agent.md` Step 9: хедер (синій `#0969da` замість зеленого, назва «Job Digest»), усі підписи німецькою (Ausgewählt / Aussortiert / Geprüft / Geschlossen, Kanal, Gründe), метрики selected/excluded/live/closed, selected — рядками з бейджем каналу і клікабельним лінком, excluded — згорнуто групами причин дрібним сірим шрифтом.
 
-{% if operator_mail == 'evening' %}## Step 7b: Нотатка для зведеного листа оператору
+{% if report_mode == 'candidate' %}## Step 7b: Проблеми для оператора
+
+Режим звітів `candidate`: щоденного листа оператору нема, листа йому НЕ слати. Лише якщо в цьому рані були проблеми (сесія порталу, скан упав, джерело не відповіло, login required), записати їх коротким HTML-фрагментом німецькою (інлайн-CSS, жовтий блок `border-left:4px solid #d4a72c;background:#fff8c5`) у `var/run/operator_todo_YYYY-MM-DD_evening.html`. Обгортка надішле його оператору після ранкового рану разом із ручними подачами. Без проблем файлу нема.
+
+{% elif operator_mail == 'evening' %}## Step 7b: Нотатка для зведеного листа оператору
 
 Оператор отримує один лист на добу, його збирає обгортка після цього рану. Листа йому НЕ слати. Записати у файл `var/run/operator_evening_YYYY-MM-DD.html` короткий HTML-фрагмент німецькою (інлайн-CSS, без зовнішньої рамки й хедера):
 - один рядок з числами: geprüft / ausgewählt / aussortiert;

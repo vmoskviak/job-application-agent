@@ -151,14 +151,14 @@ class TestClosure:
             "| # | Date | Company | Position | Source | Salary | Status | Last | Next | Notes |\n"
             "|---|---|---|---|---|---|---|---|---|---|\n"
             "| 247 | 2026-07-22 | Falk & Falk LLP | Assistenz | Email | 42K | interview | 2026-07-25 | — | нотатка |\n"
-            "| 246 | 2026-07-24 | Weststrom GmbH | IT-BA | LinkedIn | 48K | ready | 2026-07-24 | — | нотатка |\n"
+            "| 246 | 2026-07-24 | Nordnetz GmbH | IT-BA | LinkedIn | 48K | ready | 2026-07-24 | — | нотатка |\n"
             "\n"
             "| 2026-07-22 | Scrum Master | Chemhandel AG, Mönchengladbach | rejected 24.07 |\n",
             encoding="utf-8",
         )
         st = tracker_status_by_company(p)
         assert st["Falk & Falk LLP"] == "interview"
-        assert st["Weststrom GmbH"] == "ready"
+        assert st["Nordnetz GmbH"] == "ready"
         assert "rejected" in st["Chemhandel AG"]
 
 
@@ -179,3 +179,75 @@ class TestScanAccounts:
         from bot.generators.employer_scan import scan_accounts
         assert scan_accounts(["jobs"], "both") == ["jobs"]
         assert scan_accounts(["jobs", "main"], "jobs") == ["jobs"]
+
+
+class TestEmployerSenders:
+    """Відповідь з корпоративного домену роботодавця (не ATS) скан пропускав:
+    tracker_domains бачив лише legacy-рядки з email, а таких у трекерах нема."""
+
+    def _client(self, tmp_path):
+        tracker = tmp_path / "tracker.md"
+        tracker.write_text(
+            "| # | Date | Company | Position | Source | Salary | Status | Notes |\n"
+            "|---|---|---|---|---|---|---|---|\n"
+            "| 1 | 2026-09-01 | Muster Bank eG | Assistenz | Portal "
+            "(https://karriere.muster-bank.de/job/1) | — | sent | |\n"
+            "| 2 | 2026-09-02 | Kanzlei Beispiel | Sekretariat | Email | — | sent | "
+            "an bewerbung@kanzlei-beispiel.de · Quelle https://www.stepstone.de/stelle/x |\n"
+            "| 3 | 2026-09-03 | Kleinbetrieb | Büro | Email | — | sent | "
+            "an chef.kleinbetrieb@gmail.com, Kopie an erika.jobs@gmail.com |\n",
+            encoding="utf-8")
+        app = tmp_path / "applications" / "2026-09-04" / "Beispiel_Assistenz"
+        app.mkdir(parents=True)
+        (app / "generate.py").write_text(
+            "JOB = JobData(\n    email='jobs@beispiel-werke.de',\n"
+            "    application_url='https://beispiel.softgarden.io/job/1',\n"
+            "    source_url='https://de.indeed.com/viewjob?jk=1',\n)\n", encoding="utf-8")
+        (app / "email_draft.json").write_text('{"to": "hr@beispiel-werke.de"}', encoding="utf-8")
+        return tracker, tmp_path / "applications"
+
+    def test_collects_tracker_and_application_domains(self, tmp_path):
+        from bot.generators.employer_scan import employer_senders
+
+        tracker, apps = self._client(tmp_path)
+        got = employer_senders(tracker, apps, extra=["@Gruppe-Beispiel.de"],
+                               own=["erika.jobs@gmail.com"])
+        assert got[0] == "gruppe-beispiel.de"          # ручний список першим
+        for d in ("muster-bank.de", "kanzlei-beispiel.de", "beispiel-werke.de"):
+            assert d in got, d
+        # freemail — лише повна адреса, власна адреса — ніколи
+        assert "chef.kleinbetrieb@gmail.com" in got
+        assert "gmail.com" not in got and "erika.jobs@gmail.com" not in got
+        # дошки й ATS (ATS додає build_employer_queries) не дублюються
+        for d in ("stepstone.de", "indeed.com", "softgarden.io"):
+            assert d not in got, d
+
+    def test_corporate_domain_lands_in_queries(self, tmp_path):
+        from bot.generators.employer_scan import employer_senders
+
+        tracker, apps = self._client(tmp_path)
+        qs = build_employer_queries("jobs", employer_senders(tracker, apps), exclude_senders=[])
+        assert any("from:muster-bank.de" in q for q in qs)
+
+    def test_registrable_domain(self):
+        from bot.generators.employer_scan import registrable_domain
+
+        assert registrable_domain("karriere.beispiel.de") == "beispiel.de"
+        assert registrable_domain("jobs.beispiel.co.uk") == "beispiel.co.uk"
+
+
+class TestSweep:
+    def test_only_jobs_inbox_without_alerts(self):
+        from bot.generators.employer_scan import sweep_query
+
+        q = sweep_query("jobs", ["info@jobagent.stepstone.de"], days=3)
+        assert q.startswith("newer_than:3d in:inbox") and "-from:info@jobagent.stepstone.de" in q
+        assert "from:(" not in q
+        assert sweep_query("main", [], days=3) is None
+
+    def test_keep_only_classified_reply_of_tracked_company(self):
+        from bot.generators.employer_scan import keep_sweep_item
+
+        assert keep_sweep_item({"company": "Muster Bank eG", "classification": "rejected"})
+        assert not keep_sweep_item({"company": None, "classification": "rejected"})
+        assert not keep_sweep_item({"company": "Muster Bank eG", "classification": "unknown"})

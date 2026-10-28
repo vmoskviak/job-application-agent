@@ -56,7 +56,7 @@ def external_handoff_url(page) -> str | None:
     except Exception:  # noqa: BLE001
         pass
     # лінка в розмітці нема: це <button data-testid="continueFromATSiError">,
-    # клік веде на сайт роботодавця в тій самій вкладці (роботодавець → його власна Jobbörse)
+    # клік веде на Jobbörse роботодавця в тій самій вкладці
     try:
         btn = page.locator("[data-testid='continueFromATSiError'], "
                            "button:has-text('Bewerbung fortführen')").first
@@ -155,7 +155,7 @@ def apply(page, url: str, app_dir: Path, attachments: list[Path], dry_run: bool,
         )
 
     filled = forms.fill_known_fields(page)
-    filled += forms.fill_extended_fields(page, salary)
+    filled += forms.fill_extended_fields(page, salary, source="StepStone")
     filled += forms.answer_radio_questions(page)
     # Мапимо документи по секціях (CV-інпут пише в ПРОФІЛЬ — тільки CV туди!).
     # Anschreiben — DOCX, не PDF: reportlab-PDF (3КБ, шрифти без embedding)
@@ -227,8 +227,8 @@ def apply(page, url: str, app_dir: Path, attachments: list[Path], dry_run: bool,
     page.wait_for_timeout(4000)
     # Smart-apply 2026 після сабміту крутить інтерстишл «Bewerbung wird
     # vorbereitet/geprüft/gesendet» до 20–30 с; закрити браузер на ньому =
-    # заявка може не дійти (будівельний концерн 08.10.2026: інтерстишл є, листа «ist raus»
-    # нема). Чекаємо, доки він зникне або з'явиться фінальний текст.
+    # заявка може не дійти (був інтерстишл без фінального «ist raus», і заявка
+    # не дійшла). Чекаємо, доки він зникне або з'явиться фінальний текст.
     deadline = time.time() + 45
     while time.time() < deadline:
         try:
@@ -256,8 +256,8 @@ def apply(page, url: str, app_dir: Path, attachments: list[Path], dry_run: bool,
     if not confirmation:
         # Тексту підтвердження не впізнали: питаємо сам StepStone через кнопку
         # на сторінці вакансії.
-        # Кнопка міняється на «Schon beworben» не одразу: одна із заявок 10.10.2026
-        # пішла в трекер як failed, хоча заявка дійшла. Тому до трьох спроб.
+        # Кнопка міняється на «Schon beworben» не одразу: з однієї перевірки
+        # заявка, що дійшла, йшла в трекер як failed. Тому до трьох спроб.
         try:
             for _ in range(3):
                 page.goto(url, wait_until="domcontentloaded", timeout=45000)

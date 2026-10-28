@@ -2,6 +2,10 @@
 min_score: 25
 max_submissions_per_run: 25
 cleanup_min_tracker_rows: 0
+# Етап 2d: вимикачі платформ з логіном (on | shadow | off) і ліміти подач.
+# targeting.yaml це оголошений стан; /platform on не піднімає оголошені off і shadow.
+platforms: {linkedin: off, freelancermap: off, gulp: off}
+daily_limits: {email: 5, form: 5, linkedin: 5, freelancermap: 2, gulp: 3}
 excluded_title_patterns:
 - \btrainee\b
 - \bgraduate\s+program
@@ -31,7 +35,7 @@ excluded_title_patterns:
 - \bsystem\s*administrator
 - \bnetwork\s*engineer
 email_dead_companies:
-- alpenwerk
+- nordlicht
 - beispielwerk
 region_label: NRW
 locations:

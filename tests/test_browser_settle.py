@@ -64,3 +64,35 @@ def test_settle_disabled_returns_input():
     page = FakePage([JOB_BODY])
     assert settle_body(page, settle_ms=0, text=NAV_SHELL) == NAV_SHELL
     assert page.reads == 0
+
+
+def test_get_context_headed_launch_and_reuse(monkeypatch, tmp_path):
+    """headed: вікно на дисплеї сервера без ознаки автоматизації; другий виклик бере відкритий контекст."""
+    import playwright.sync_api as pw
+
+    from bot.scrapers import browser
+
+    launches = []
+
+    class Chromium:
+        def launch_persistent_context(self, **kw):
+            launches.append(kw)
+            return object()
+
+    class PW:
+        chromium = Chromium()
+
+        def start(self):
+            return self
+
+    monkeypatch.setattr(pw, "sync_playwright", lambda: PW())
+    monkeypatch.setattr(browser, "PROFILE_DIR", tmp_path / "profile")
+    monkeypatch.setattr(browser, "_context", None)
+    monkeypatch.setattr(browser, "_playwright", None)
+    ctx = browser.get_context(headed=True)
+    assert launches[0]["headless"] is False
+    assert launches[0]["args"] == ["--disable-blink-features=AutomationControlled"]
+    assert browser.get_context() is ctx and len(launches) == 1
+    monkeypatch.setattr(browser, "_context", None)
+    browser.get_context()
+    assert launches[1]["headless"] is True and "args" not in launches[1]

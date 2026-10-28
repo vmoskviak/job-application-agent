@@ -1,0 +1,99 @@
+powered by
+service@agentur.example
++49 89 0000000
+Registrieren
+Anmelden
+Stichwortsuche nach Projekten, z.B. Java, SAP, ...
+Stadt
+Suchen
+Cloud & DevOps Engineer (m/w/d) Azure / AWS Infrastructure
+Direkt vom Auftraggeber
+Teilen
+URL Kopieren
+Seite drucken
+Beginn: 04.10.2026
+Dauer: 6 Monate mit Verlängerung
+Auslastung: 100 %
+Projekt-Rolle: Cloud & DevOps Engineer (m/w/d) Azure / AWS Infrastructure
+Remote-Arbeit möglich
+Einsatzort: Köln
+Jetzt bewerben
+Veröffentlicht am 21.10.2026 11:09
+Beschreibung
+Über das Projekt:
+Unser Kunde, ein innovatives mittelständisches Unternehmen, befindet sich mitten in der Transformation seiner On-Premise-Infrastruktur in eine moderne Hybrid-Cloud-Umgebung. Zur Verstärkung des Engineering-Teams suchen wir einen freiberuflichen Cloud & DevOps Spezialisten, der die Cloud-Architektur aufbaut und die internen Deployments automatisiert.
+
+Das muss erledigt werden (Aufgaben):
+• Aufbau, Konfiguration und Absicherung von Landing Zones in der Cloud (Fokus: Microsoft Azure oder AWS)
+• Migration von On-Premise-Workloads und Applikationen in die Cloud-Infrastruktur
+• Automatisierung des Infrastruktur-Setups mittels Infrastructure as Code (IaC) – primär mit Terraform oder Ansible
+• Aufbau und Optimierung von CI/CD-Pipelines (z.B. mittels GitHub Actions, GitLab CI oder Azure DevOps) zur automatisierten Bereitstellung
+• Implementierung von Cloud-Monitoring- und Alerting-Systemen (z.B. Prometheus, Grafana oder cloud-native Tools)
+
+Das bringen Sie mit (Anforderungen):
+• Mehrjährige Erfahrung als Cloud- oder DevOps-Engineer im Enterprise- oder gehobenen Mittelstandsumfeld
+• Nachweisbare Projekterfahrung mit Microsoft Azure und/oder AWS (entsprechende Zertifizierungen sind ein Plus)
+• Fundierte Kenntnisse im Bereich Infrastructure as Code (Terraform zwingend erforderlich)
+• Sicherer Umgang mit Scripting (PowerShell, Bash oder Python) zur Prozessautomatisierung
+• Fließende Deutschkenntnisse in Wort und Schrift
+
+Projekteckdaten:
+• Start: Zum kommenden Monat / nach Absprache
+• Laufzeit: 6 Monate (Option auf Verlängerung vorhanden)
+• Auslastung: Vollzeit (32–40 Std./Woche, 90-100% Remote möglich)
+• Budget: 85 € – 105 € / Std. All-In (Netto)
+Must-Have Skills
+Mehrjährige Cloud-Erfahrung im Enterprise
+
+Hinweis: Um die Lesbarkeit des Textes zu verbessern, wird für die Bezeichnung von Personen, Funktionen etc. die männliche Form verwendet. Sie steht jedoch ausnahmslos für alle Geschlechter.
+
+powered by
+Xing
+LinkedIn
+Facebook
+Instagram
+Twitter
+YouTube
+Freelancer
+Projektbörse
+Registrierung für Freelancer
+GULP Membership
+Projektvertrag elektronisch unterzeichnen
+Checkliste: Freelancer werden
+Stundensatz kalkulieren
+Artikel für Freelancer
+Unternehmen
+GULP Direkt
+Verfügbare Freelancer finden
+GULP Talent Solutions
+IT Service Desk
+Compliance Services
+GULP Corporate
+Artikel für Unternehmen
+Bewerber
+Jobbörse
+Berufsbilder
+Bewerbertipps
+Erfahrungsberichte
+Initiativbewerbung
+Meistgesuchte Skills
+Artikel für Bewerber
+Über uns
+Kontakt und Standorte
+Interne Karriere
+Nachhaltigkeit
+Fragen und Antworten
+Verantwortung und Qualität
+Netiquette
+Presse und Aktuelles
+AGB
+Datenschutz
+Impressum
+Meldung von Schwachstellen der Sicherheit
+Gender-Hinweis
+Zurück zum Anfang
+Willkommen. Übernehmen Sie die Kontrolle über Ihre Cookies.
+Für ein bestmögliches User-Erlebnis setzen wir Technologien wie z. B. Cookies ein. Wenn Sie der Verwendung aller beschriebenen Cookies zustimmen, klicken Sie auf "Alle akzeptieren". Möchten Sie Ihre Cookie-Präferenzen anpassen, klicken Sie auf "Cookies anpassen", um festzulegen, welchen Cookies Sie zustimmen. Klicken Sie auf "Alle ablehnen" um nur dem Einsatz zwingend notwendiger Cookies zuzustimmen. Welche Cookies wir verwenden und warum, lesen Sie in unsererDatenschutzhinweisen.
+Anpassen
+Alle ablehnen
+Alle akzeptieren

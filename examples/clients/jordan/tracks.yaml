@@ -1,0 +1,20 @@
+default_priority: 5
+tracks:
+  android:
+    keywords: [Android, Kotlin, Jetpack Compose, Kotlin Multiplatform]
+    variant: android
+    priority: 0
+    cv_file: CV_Android.pdf   # вкладення пакета (clients/<slug>/attachments/)
+  ai:
+    keywords: [LLM, AI Agent, MCP, Claude]
+    variant: ai
+    priority: 1
+    cv_file: CV_AI.pdf
+  fde:
+    keywords: [Forward Deployed Engineer]
+    variant: ai
+    excluded: true
+  ios_only:
+    keywords: [iOS, Swift, SwiftUI]
+    variant: android
+    excluded: true

@@ -16,7 +16,6 @@ from datetime import date
 from pathlib import Path
 from typing import Iterable
 
-from bot.apply.candidate import FULL_NAME, PHONE
 
 MAX_FOLLOWUPS_PER_RUN = 12
 ACTIVE_STATUSES = {"sent"}
@@ -51,6 +50,8 @@ class FollowupRow:
     already_done: bool
     email_channel: bool        # чи є реплайабельний email-тред роботодавця
     raw_next_action: str
+    sent_on: str = ""         # ISO-дата подачі (cells[1]); контракт: follow-up за віком
+    notes: str = ""           # Notes рядка: адреса роботодавця дає мову follow-up
 
 
 @dataclass
@@ -97,16 +98,34 @@ def _account_for(notes: str, aliases: Iterable[str] | None = None) -> str:
     return acc
 
 
-def _followup_body(role: str) -> str:
+def followup_body(role: str, lang: str, full_name: str, phone: str) -> str:
+    """Текст follow-up за мовою заявки; без тире як сполучника."""
+    if lang == "de":
+        return (
+            "Sehr geehrte Damen und Herren,\n\n"
+            f"ich möchte höflich an meine Bewerbung als {role} anknüpfen und mein "
+            "weiterhin großes Interesse an der Position bekräftigen. Gerne stehe ich "
+            "für Rückfragen oder ein persönliches Gespräch zur Verfügung.\n\n"
+            "Über eine kurze Rückmeldung zum aktuellen Stand des Auswahlverfahrens "
+            "würde ich mich sehr freuen.\n\n"
+            f"Mit freundlichen Grüßen\n{full_name}\n{phone}"
+        )
     return (
-        "Sehr geehrte Damen und Herren,\n\n"
-        f"ich möchte höflich an meine Bewerbung als {role} anknüpfen und mein "
-        "weiterhin großes Interesse an der Position bekräftigen. Gerne stehe ich "
-        "für Rückfragen oder ein persönliches Gespräch zur Verfügung.\n\n"
-        "Über eine kurze Rückmeldung zum aktuellen Stand des Auswahlverfahrens "
-        "würde ich mich sehr freuen.\n\n"
-        f"Mit freundlichen Grüßen\n{FULL_NAME}\n{PHONE}"
+        "Hello,\n\n"
+        f"I wanted to follow up on my application for the {role} role. I remain very "
+        "interested in the position and would be glad to answer any questions or walk "
+        "you through how I could contribute to the team. If it helps, I can also share "
+        "more detail on the projects that are closest to this role.\n\n"
+        "Could you let me know where the selection process currently stands?\n\n"
+        f"Best regards\n{full_name}\n{phone}"
     )
+
+
+def _followup_body(role: str) -> str:
+    # candidate читає профіль клієнта на імпорті (і вимагає street); контрактний
+    # клієнт його не має, тому імпорт тут, а не на рівні модуля
+    from bot.apply.candidate import FULL_NAME, PHONE
+    return followup_body(role, "de", FULL_NAME, PHONE)
 
 
 def parse_tracker_rows(text: str, default_year: int,
@@ -120,7 +139,7 @@ def parse_tracker_rows(text: str, default_year: int,
         #                  status | updated | next_action | notes
         if len(cells) < 10 or not cells[0].isdigit():
             continue
-        row_id, _, company, role, channel = (
+        row_id, sent_on, company, role, channel = (
             cells[0], cells[1], cells[2], cells[3], cells[4])
         status = cells[6].split()[0].lower() if cells[6] else ""
         next_action, notes = cells[8], cells[9]
@@ -140,6 +159,8 @@ def parse_tracker_rows(text: str, default_year: int,
             already_done=bool(_DONE_RE.search(notes)),
             email_channel=email_channel,
             raw_next_action=next_action,
+            sent_on=sent_on,
+            notes=notes,
         ))
     return rows
 
@@ -180,6 +201,49 @@ def find_due_followups(
         due.append(DueFollowup(
             row_id=r.row_id, company=r.company, role=r.role,
             deadline=r.deadline, msg_id=r.msg_id, account=r.account,
+            body=_followup_body(r.role),
+        ))
+    return due, skipped
+
+
+def find_due_by_age(
+    rows: list[FollowupRow], today: date, days: int
+) -> tuple[list[DueFollowup], list[dict]]:
+    """Контрактний ринок: follow-up через `days` днів після подачі, без дедлайну в
+    next_action. Умови ті самі, що й у find_due_followups: статус sent, Msg-ID,
+    email-тред роботодавця, ще не нагадували. Повертає (due, skipped з причиною)."""
+    from datetime import timedelta
+
+    due: list[DueFollowup] = []
+    skipped: list[dict] = []
+    for r in rows:
+        if r.status not in ACTIVE_STATUSES:
+            continue
+        try:
+            sent = date.fromisoformat(r.sent_on)
+        except ValueError:
+            skipped.append({"row_id": r.row_id, "company": r.company,
+                            "reason": "date unparsed", "sent_on": r.sent_on})
+            continue
+        deadline = sent + timedelta(days=days)
+        if deadline > today:
+            continue
+        if r.already_done:
+            skipped.append({"row_id": r.row_id, "company": r.company,
+                            "reason": "already followed up"})
+            continue
+        if not r.msg_id:
+            skipped.append({"row_id": r.row_id, "company": r.company,
+                            "reason": "no Msg-ID (no email thread) — auto-ghost handles it"})
+            continue
+        if not r.email_channel:
+            skipped.append({"row_id": r.row_id, "company": r.company,
+                            "reason": "non-email channel (platform confirmation, "
+                                      "not employer thread) — auto-ghost handles it"})
+            continue
+        due.append(DueFollowup(
+            row_id=r.row_id, company=r.company, role=r.role,
+            deadline=deadline.isoformat(), msg_id=r.msg_id, account=r.account,
             body=_followup_body(r.role),
         ))
     return due, skipped

@@ -57,7 +57,7 @@ def test_split_email_and_portal(tmp_path):
 def test_split_strips_dead_email_company(capsys):
     from bot.generators.batch import split_email_and_portal
     items = [
-        _make_batch_item("Beispielwerk GmbH", email="bewerbung@beispielwerk.de"),
+        _make_batch_item("Beispielwerk GmbH", email="bewerbung@beispielwerk.example"),
         _make_batch_item("Email Co",      email="jobs@email.de"),
     ]
     email_items, portal_items = split_email_and_portal(items)

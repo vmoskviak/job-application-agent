@@ -263,6 +263,16 @@ def render_from_data(job_dict: dict, tailored_dict: dict) -> Optional[Path]:
                   f"{job.email} ігнорується, пакет іде як портальний/ручний")
             job.email = None
 
+    from bot.generators.umlauts import check_tailored
+    translit = check_tailored(tailored, known=(job.company, job.title, job.location, FULL_NAME))
+    if translit:
+        # Пакет не рендеримо: лист без умлаутів читається як написаний без
+        # німецької клавіатури (батч 22.10.2026, шість листів поспіль)
+        print(f"⛔ {job.company} — {job.title}: текст пакета транслітом замість ä/ö/ü/ß "
+              f"({', '.join(translit[:8])}). Пакет НЕ зрендерено: переписати "
+              f"anschreiben/profile/kernkompetenzen з умлаутами й зрендерити знову.")
+        return None
+
     print(f"\n{'='*50}")
     print(f"  Firma:  {job.company}")
     print(f"  Rolle:  {job.title}")
@@ -447,8 +457,9 @@ def main():
         sys.exit(0)
 
     if args.batch_render:
-        batch_render_all(args.batch_render, APPLICATIONS_DIR)
-        sys.exit(0)
+        failed = batch_render_all(args.batch_render, APPLICATIONS_DIR)
+        # 4 = частину пакетів відхилив сторож тексту (решта зрендерена)
+        sys.exit(4 if failed else 0)
 
     if args.check_responses:
         if not TRACKER_PATH.exists():

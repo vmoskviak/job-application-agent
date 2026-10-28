@@ -113,8 +113,8 @@ def test_resolve_from_notes_path(tmp_path):
 
 
 def test_resolve_by_date_and_slug(tmp_path):
-    app = make_app(tmp_path, "2026-06-08", "MusterITGmbH_JuniorConsultantHealth")
-    r = _row("2026-06-08", "MusterIT GmbH", "Junior Consultant Healthcare IT")
+    app = make_app(tmp_path, "2026-06-08", "CGIGmbH_JuniorConsultantHealth")
+    r = _row("2026-06-08", "CGI GmbH", "Junior Consultant Healthcare IT")
     resolved, reason = resolve_app_dir(r, tmp_path / "applications")
     assert resolved == app and reason == "date_slug"
 

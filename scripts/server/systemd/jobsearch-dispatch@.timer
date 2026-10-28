@@ -1,0 +1,12 @@
+# Щопівгодини вдень о :25 (08:25 … 20:25), з випадковою затримкою до 2 хв,
+# пропущені запуски не наздоганяються. Вечірній ран о 20:30 наповнює чергу, перша подача вранці.
+[Unit]
+Description=jobsearch lead dispatch timer (%i)
+
+[Timer]
+OnCalendar=*-*-* 08..20:25:00
+RandomizedDelaySec=120
+Persistent=false
+
+[Install]
+WantedBy=timers.target

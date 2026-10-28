@@ -1,0 +1,18 @@
+# Machine config for the job-search engine. Copy to /root/.claude-env, chmod 600.
+# run_agent.sh and the systemd units source this file; keep the `export` form.
+
+export CLAUDE_CODE_OAUTH_TOKEN=sk-ant-oat01-...        # claude setup-token
+export JOBSEARCH_CLIENTS_DIR=/opt/jobsearch-clients/clients
+export JOBSEARCH_OPERATOR_EMAIL=you@example.com        # reports, interviews
+export JOBSEARCH_ALERT_TO=you@example.com              # failure alerts (e-mail fallback when Telegram is off)
+export JOBSEARCH_OPERATOR_MAIL=evening                 # evening: one summary mail per day | always: mail after each run
+
+# optional
+# export PERPLEXITY_API_KEY=...                        # web search for openings
+# export FIRECRAWL_API_KEY=...                         # fallback scraper
+# export CLAUDE_MODEL=opus
+# export JOBSEARCH_VNC_HINT='vnc://localhost:5901 (ssh -f -N -L 5901:127.0.0.1:5900 <server> first)'
+# export JOBSEARCH_TELEGRAM_TOKEN_OPERATOR=...        # one bot for notifications (accounts.yaml → telegram)
+# export JOBSEARCH_TELEGRAM_TOKEN_<SLUG>=...          # a client's own bot with buttons (contract market)
+# export JOBSEARCH_INBOX_DRY_RUN_<SLUG>=1             # shadow mode of the inbox watcher for one client
+# export JOBSEARCH_LOCK_WAIT=900                      # seconds run_agent.sh waits for the machine lock

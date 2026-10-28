@@ -10,6 +10,9 @@ from typing import TYPE_CHECKING, Optional
 from bs4 import BeautifulSoup
 
 from bot.textclean import strip_invisible
+from bot.job_title import (
+    company_from_text, first_h1, is_junk_title, recover_title,
+)
 
 if TYPE_CHECKING:
     from bot.scrapers.models import IntakeResult
@@ -88,8 +91,8 @@ _TITLE_COMPANY_RE = re.compile(r"^(?P<title>.+?)\s+[-–]\s+(?P<company>[^-–|]
 
 
 def split_portal_title(raw: str) -> tuple[str, str | None]:
-    """(«Teamassistenz Personalwesen (m/w/d) Vollzeit / Teilzeit», «Beispiel Kultur GmbH»)
-    з «Teamassistenz Personalwesen (m/w/d) Vollzeit / Teilzeit - Beispiel Kultur GmbH | RP Stellenmarkt».
+    """(«Teamassistenz Personalwesen (m/w/d) Vollzeit / Teilzeit», «Musterland Kultur GmbH»)
+    з «Teamassistenz Personalwesen (m/w/d) Vollzeit / Teilzeit - Musterland Kultur GmbH | RP Stellenmarkt».
     Без суфікса порталу нічого не чіпає: тире всередині назв ролей звичне."""
     stripped = _PORTAL_SUFFIX_RE.sub("", raw).strip()
     if stripped == raw.strip():
@@ -104,23 +107,26 @@ def parse_text(text: str, source_url: str = "") -> JobData:
     """Parses raw job description text into JobData."""
     text = strip_invisible(text)  # м'які переноси ламають і назву, і фільтри
     lines = [l.strip() for l in text.strip().splitlines() if l.strip()]
-    title = lines[0] if lines else "Unbekannte Stelle"
     # Firecrawl-markdown (Indeed тощо) починається з шапки сайту («WasWoJobs
-    # finden»), а справжня назва — в першому H1 нижче.
-    for line in lines[:10]:
-        if line.startswith("# "):
-            title = line[2:].strip()
-            break
+    # finden», «Suchen»), а справжня назва — у markdown-заголовку нижче.
+    # H1 лишається назвою, навіть сміттєвий: «# 404» має відпасти у фільтрі.
+    # Плаский перший рядок, якщо він не сміття, теж не чіпаємо: «## Ihre
+    # Aufgaben» нижче не назва.
+    h1 = first_h1(text)
+    title = h1 if h1 is not None else (lines[0] if lines else "Unbekannte Stelle")
+    if is_junk_title(title):
+        title = recover_title(text) or title
 
-    company = ""
+    # Indeed-markdown: компанія — лінк на власну /cmp/-сторінку, часто без
+    # правової форми в тексті ("Beispiel Sprachen"). Він надійніший за
+    # GmbH-евристику, яка ловила заголовок «##### Assistenz bei der X GmbH».
+    company = company_from_text(text) or ""
     location = ""
     for line in lines[:15]:
+        # заголовки й картинки («![Firma logo](…)») — не компанія і не місто
+        if line.startswith(("#", "![")):
+            continue
         stripped = _MD_LINK_RE.sub(r"\1", line)
-        # Indeed-markdown: компанія — лінк на власну /cmp/-сторінку,
-        # часто без правової форми в тексті ("Beispiel Sprachen").
-        md_link = _MD_LINK_RE.fullmatch(line)
-        if md_link and "/cmp/" in line and not company:
-            company = md_link.group(1).strip()
         if re.search(r'\b(GmbH|AG|SE|KG|mbH|e\.V\.|gGmbH)\b', stripped) and not company:
             company = stripped
         if re.search(

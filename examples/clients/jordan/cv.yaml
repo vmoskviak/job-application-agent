@@ -1,0 +1,7 @@
+# CV зовнішнє: готові PDF лежать у attachments/ (фаза 2 їх перевіряє).
+source: external
+variants: [android, ai]
+default_variant: android
+files:
+  android: attachments/CV_Android.pdf
+  ai: attachments/CV_AI.pdf

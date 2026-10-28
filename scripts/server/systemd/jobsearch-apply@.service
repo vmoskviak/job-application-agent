@@ -1,0 +1,15 @@
+# Один прохід браузерного воркера одного клієнта: ATS-форми без логіну з черги лідів;
+# запускає таймер jobsearch-apply@<slug>.timer. Браузер видимий на дисплеї :99 (Xvfb),
+# щоб оператор доробив hand-off по VNC у тій самій вкладці; прохід із hand-off чекає
+# оператора до JOBSEARCH_HANDOFF_UNTIL (19:55), звідси довгий TimeoutStartSec.
+# Тіньовий тиждень: JOBSEARCH_APPLY_DRY_RUN=1 у /root/.claude-env (юніт не редагувати:
+# для oneshot drop-in з ExecStart= додає другий запуск, а не замінює перший).
+[Unit]
+Description=jobsearch browser apply worker (%i)
+After=network-online.target
+
+[Service]
+Type=oneshot
+Environment=DISPLAY=:99
+ExecStart=/opt/jobsearch-autopilot/scripts/server/run_service.sh scripts/apply_leads.py %i
+TimeoutStartSec=12h

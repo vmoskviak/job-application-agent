@@ -60,7 +60,7 @@ def test_parse_text_company_markdown_link_stripped():
 
 # Assistenz der Geschäftsleitung (m/w/d)
 
-[St. Beispiel Gruppe GmbH](https://de.indeed.com/cmp/St.-Beispiel-Gruppe-Gmbh?campaignid=mobvjcmp)
+[St. Elisabeth Gruppe GmbH](https://de.indeed.com/cmp/St.-Elisabeth-Gruppe-Gmbh?campaignid=mobvjcmp)
 
 Herne
 
@@ -68,7 +68,7 @@ Wir suchen eine Assistenz der Geschäftsleitung.
 """
     job = parse_text(text, source_url="https://de.indeed.com/viewjob?jk=0a0a0a0a0a0a0a02")
     assert job.title == "Assistenz der Geschäftsleitung (m/w/d)"
-    assert job.company == "St. Beispiel Gruppe GmbH"
+    assert job.company == "St. Elisabeth Gruppe GmbH"
 
 
 def test_parse_text_plain_text_title_unchanged():
@@ -92,19 +92,19 @@ def test_no_portal_for_regular_text():
 
 def test_split_portal_title_rp_stellenmarkt():
     from bot.generators.intake import split_portal_title
-    t, c = split_portal_title("Teamassistenz Personalwesen (m/w/d) Vollzeit / Teilzeit - Beispiel Kultur GmbH | RP Stellenmarkt")
-    assert t == "Teamassistenz Personalwesen (m/w/d) Vollzeit / Teilzeit" and c == "Beispiel Kultur GmbH"
-    t, c = split_portal_title("Teamassistenz Energiemanagement und Klimaschutz (w/m/d) - Beispiel Hochschule Köln | RP Stellenmarkt")
-    assert c == "Beispiel Hochschule Köln"
+    t, c = split_portal_title("Teamassistenz Personalwesen (m/w/d) Vollzeit / Teilzeit - Musterland Kultur GmbH | RP Stellenmarkt")
+    assert t == "Teamassistenz Personalwesen (m/w/d) Vollzeit / Teilzeit" and c == "Musterland Kultur GmbH"
+    t, c = split_portal_title("Teamassistenz Energiemanagement und Klimaschutz (w/m/d) - Deutsche Sporthochschule Köln | RP Stellenmarkt")
+    assert c == "Deutsche Sporthochschule Köln"
     # без суфікса порталу тире в назві лишається назвою
     assert split_portal_title("Teamassistenz (m/w/d) - Standort Köln") == ("Teamassistenz (m/w/d) - Standort Köln", None)
 
 
 def test_parse_text_rp_stellenmarkt_company_and_location():
     from bot.generators.intake import parse_text
-    text = ("Teamassistenz Personalwesen (m/w/d) Vollzeit / Teilzeit - Beispiel Kultur GmbH | RP Stellenmarkt\n"
-            "Köln\nWir suchen ... bewerbung@beispielkultur.de")
+    text = ("Teamassistenz Personalwesen (m/w/d) Vollzeit / Teilzeit - Musterland Kultur GmbH | RP Stellenmarkt\n"
+            "Köln\nWir suchen ... bewerbung@musterland-kultur.example")
     job = parse_text(text, "https://jobs.rp-online.de/jobs/sde-123334/x/")
     assert job.title == "Teamassistenz Personalwesen (m/w/d) Vollzeit / Teilzeit"
-    assert job.company == "Beispiel Kultur GmbH"
+    assert job.company == "Musterland Kultur GmbH"
     assert job.location == "Köln"

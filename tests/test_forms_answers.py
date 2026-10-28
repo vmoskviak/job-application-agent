@@ -23,7 +23,7 @@ def test_text_answer_by_question_pattern():
     rules = [{"pattern": r"vollzeit oder teilzeit|stunden pro woche", "answer": "Teilzeit, 20 bis 25 Stunden pro Woche"}]
     q = "möchten sie in vollzeit oder teilzeit arbeiten? falls teilzeit: wie viel stunden pro woche? *"
     assert text_answer(q, rules) == "Teilzeit, 20 bis 25 Stunden pro Woche"
-    assert text_answer("bau & plan standort *", rules) is None
+    assert text_answer("musterbau & söhne standort *", rules) is None
 
 
 def test_choose_radio_only_for_configured_questions():

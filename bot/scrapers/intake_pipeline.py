@@ -4,6 +4,7 @@ from bot.scrapers.adapters import get_adapter
 from bot.scrapers.fetch import fetch_page
 from bot.scrapers.liveness import check_liveness
 from bot.scrapers.models import IntakeResult
+from bot.job_title import is_junk_title, recover_title
 
 
 def intake_url(url: str, use_playwright: bool = True) -> IntakeResult:
@@ -32,6 +33,10 @@ def intake_url(url: str, use_playwright: bool = True) -> IntakeResult:
 
     adapter = get_adapter(url)
     job = adapter.extract(page)
+    # Адаптер узяв шапку сторінки («Suchen», «XING Job») замість назви, а опис
+    # цілий: назву відновлюємо з опису, інакше фільтр викине живу вакансію.
+    if is_junk_title(job.title):
+        job.title = recover_title(job.description) or job.title
     if len(job.description.strip()) < 100:
         return IntakeResult(job=None, liveness="unknown", intake_method=page.method, reason="description too short")
 

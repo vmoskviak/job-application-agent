@@ -38,6 +38,13 @@
         → --batch-render (PDF/DOCX) → email-подачі
         → bot.apply.runner (портали) → відповіді роботодавців
         → follow-ups → cleanup → звіт оператору → git push даних
+щогодини  (контракт, етап 2a) inbox watcher: відповіді й пошта платформ → клас
+        → статус у трекері → картка в Telegram з чернеткою (claude -p під локом)
+        → follow-ups за віком заявки → git push даних
+бот       Telegram long polling: кнопки → диспетчер → reply у треді через gmail_rest
+щогодини  (ринок найму, telegram.mode: notify) той самий watcher без трекера й чернеток:
+        співбесіда/запит → текст оператору в Telegram у ту ж годину; після нічного
+        рану notify_run.py шле нові interview/offer/action_needed з трекера
 ```
 
 Проміжні файли живуть у `<client>/var/run/` з датою в назві й ротуються через
@@ -57,6 +64,12 @@
 4. запускає `claude -p` з робочим каталогом у папці клієнта;
 5. після рану перевіряє Msg-ID, які агент дописав у трекер, і сканує пошту на
    незакриті запрошення; про збої шле алерт напряму через Gmail REST.
+
+Для контрактного клієнта поруч із cron живуть два systemd-юніти
+(`scripts/server/systemd/`): сервіс `jobsearch-telegram@<slug>` (бот) і таймер
+`jobsearch-inbox@<slug>` (погодинний `scripts/inbox_watch.py`). Обидва стартують
+через `scripts/server/run_service.sh`, який бере оточення машини з того самого
+файла, що й `run_agent.sh`. Стан етапу 2a лежить у `<client>/var/state/`.
 
 ## Запобіжники
 

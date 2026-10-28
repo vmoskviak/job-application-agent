@@ -4,7 +4,7 @@
     render_run.py evening|morning|onboarding [--out-dir DIR] [--headless]
 
 Пише в `<client>/var/run/`:
-    prompt_<mode>.md   промпт із docs/agents/<mode>_*.md.j2 + конфіг клієнта
+    prompt_<mode>.md   промпт із docs/agents/*.md.j2 (шаблон за ринком і режимом) + конфіг клієнта
     mcp.json           MCP-сервери під його пошту й браузерний профіль
     settings.json      хуки Claude Code (заборона небезпечних видалень пошти)
 
@@ -24,23 +24,40 @@ sys.path.insert(0, str(ENGINE))
 
 from bot import client as _client  # noqa: E402
 
+# Шаблон промпта за (ринок, режим). Пари, якої нема, ринок ще не підтримує.
 TEMPLATES = {
-    "evening": "evening_discover_agent.md.j2",
-    "morning": "morning_apply_agent.md.j2",
-    "onboarding": "onboarding_agent.md.j2",
+    ("de_employment", "evening"): "evening_discover_agent.md.j2",
+    ("de_employment", "morning"): "morning_apply_agent.md.j2",
+    ("de_employment", "onboarding"): "onboarding_agent.md.j2",
+    ("contract", "evening"): "evening_contract_agent.md.j2",
 }
+MODES = sorted({mode for _, mode in TEMPLATES})
+EXIT_UNSUPPORTED = 3  # run_agent.sh: ринок цей режим не має, пропустити тихо
+
+
+def supports(market: str, mode: str) -> bool:
+    return (market, mode) in TEMPLATES
 
 
 def mcp_server_name(alias: str) -> str:
     return "gmail" if alias == "jobs" else f"gmail-{alias}"
 
 
+def _quotable_rate(rate: dict | None) -> dict:
+    """Ставка без нижніх меж (hourly_min тощо): walk-away число агентові не
+    показується, щоб не потрапило ні в лист, ні в дайджест."""
+    return {k: v for k, v in (rate or {}).items() if "min" not in k}
+
+
 def build_context(c: _client.Client) -> dict:
     groups = c.search.get("query_groups", [])
+    profile = dict(c.profile)
+    if "rate" in profile:
+        profile["rate"] = _quotable_rate(profile["rate"])
     return {
         "slug": c.slug,
         "full_name": c.full_name,
-        "profile": c.profile,
+        "profile": profile,
         "client_root": str(c.root),
         "engine": str(ENGINE),
         "gmail": c.accounts.get("gmail", {}),
@@ -49,10 +66,16 @@ def build_context(c: _client.Client) -> dict:
         "report_email": c.report_email,
         # evening — оператор отримує один лист після вечірнього рану; always — після кожного
         "operator_mail": os.environ.get("JOBSEARCH_OPERATOR_MAIL", "evening"),
+        # operator | candidate: див. Client.report_mode
+        "report_mode": c.report_mode,
         "search": c.search,
         "query_count": sum(len(g.get("queries", [])) for g in groups),
         "variants": c.cv.get("variants", []),
         "year": str(date.today().year),
+        "market": c.market,
+        "report_lang": c.report_lang,
+        "rate": _quotable_rate(c.profile.get("rate")),
+        "sources": dict(c.search.get("sources") or {}),
     }
 
 
@@ -64,7 +87,9 @@ def render_prompt(mode: str, c: _client.Client) -> str:
         undefined=StrictUndefined,
         keep_trailing_newline=True,
     )
-    return env.get_template(TEMPLATES[mode]).render(**build_context(c))
+    if not supports(c.market, mode):
+        raise _client.ClientError(f"ринок {c.market}: режим {mode} ще не підтримується")
+    return env.get_template(TEMPLATES[(c.market, mode)]).render(**build_context(c))
 
 
 def build_mcp(c: _client.Client, headless: bool) -> dict:
@@ -105,13 +130,24 @@ def build_settings() -> dict:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("mode", choices=sorted(TEMPLATES))
+    parser.add_argument("mode", choices=MODES)
     parser.add_argument("--out-dir", type=Path)
     parser.add_argument("--headless", action="store_true",
                         help="Playwright MCP без вікна (сервер)")
+    parser.add_argument("--check", action="store_true",
+                        help=f"нічого не писати: вихід 0, якщо ринок клієнта має цей режим, "
+                             f"інакше {EXIT_UNSUPPORTED}")
     args = parser.parse_args(argv)
 
-    c = _client.active()
+    try:
+        c = _client.active()
+        if not supports(c.market, args.mode):
+            raise _client.ClientError(f"ринок {c.market}: режим {args.mode} ще не підтримується")
+    except _client.ClientError as e:
+        print(e, file=sys.stderr)
+        return EXIT_UNSUPPORTED if "ще не підтримується" in str(e) else 2
+    if args.check:
+        return 0
     out = args.out_dir or c.run_dir
     out.mkdir(parents=True, exist_ok=True)
 

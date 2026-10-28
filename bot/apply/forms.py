@@ -11,7 +11,7 @@ CONFIRMATION_PATTERNS = [
     # StepStone smart-apply 2026: фінальна сторінка після «Bewerbung abschicken».
     # Інтерстишл «Bewerbung wird vorbereitet/geprüft/gesendet» сюди НЕ входить:
     # після нього StepStone може віддати «…auf der Unternehmensseite
-    # weiterführen», і заявка не подана (будівельний концерн, 08.10.2026).
+    # weiterführen», і заявка не подана.
     "deine bewerbung ist auf dem weg",
     "bewerbung versendet",   # «Bewerbung versendet! Du bist jetzt offiziell im Rennen»
     "bewerbung wurde versendet",
@@ -27,7 +27,7 @@ CONFIRMATION_PATTERNS = [
     # Stepstone success-сторінка 2026: «Geschafft, deine Bewerbung ist raus!»
     # (перевірено 22.07 на 4 подачах). УВАГА: «Eckdaten zur Bewerbung» тут НЕ
     # можна — цей блок є і на «Hat es geklappt?»-сторінці зовнішньої подачі,
-    # де заявка ще НЕ відправлена (перевірено 22.07 на корпоративному ATS)
+    # де заявка ще НЕ відправлена.
     "bewerbung ist raus",
     "glückwunsch",
     "bewerbung wurde übermittelt",
@@ -51,7 +51,7 @@ def accept_cookies(page) -> None:
         "button:has-text('Alles akzeptieren')",
         "button:has-text('Akzeptieren')",
         "button:has-text('Accept all')",
-        # Корпоративні ATS: «Nur notwendige Cookies» (мінімальна згода) / «Geht klar»
+        # Банери з мінімальною згодою: «Nur notwendige Cookies» / «Geht klar»
         "text=Nur notwendige Cookies",
         "button:has-text('Geht klar')",
     ]
@@ -292,7 +292,40 @@ def earliest_start_iso(today=None) -> str:
     return first_next.isoformat()
 
 
-def fill_extended_fields(page, salary: str | None = None) -> list[str]:
+_GENERIC_LABELS = {"value", "wert", "betrag", "amount", "antwort", "answer", "eingabe",
+                   "question", "frage", "field", "input", "text", "number"}
+
+
+def is_generic_label(meta: str) -> bool:
+    """Label поля нічого не каже про питання («Value *»): питання вище, в групі."""
+    # слова від 3 літер: id на кшталт «q-7f3a-value» дають уламки «f», «a»
+    words = [w for w in re.findall(r"[^\W\d_]+", (meta or "").lower()) if len(w) >= 3]
+    return not words or all(w in _GENERIC_LABELS for w in words)
+
+
+def plain_select_choice(meta: str, options: list[tuple[str, str]],
+                        source: str | None = None) -> tuple[str | None, str | None]:
+    """Однозначні обов'язкові селекти з кастомних питань ATS (StepStone 2026):
+    валюта поруч із Gehaltsvorstellung — EUR; «Wie haben Sie von der Position
+    erfahren» — портал, через який подаємо, якщо він є серед опцій. Інакше
+    (None, None): поле лишається порожнім, як і решта незнайомих."""
+    def pick(*needles: str) -> str | None:
+        for v, t in options:
+            low = t.lower()
+            if any(n == low or n in low.split() for n in needles):
+                return v
+        return None
+
+    if "währung" in meta or "currency" in meta:
+        value = pick("eur", "euro", "€")
+        return (value, "währung") if value else (None, None)
+    if source and any(k in meta for k in ("erfahren", "aufmerksam", "how did you hear")):
+        value = pick(source.lower())
+        return (value, f"quelle:{source}") if value else (None, None)
+    return None, None
+
+
+def fill_extended_fields(page, salary: str | None = None, source: str | None = None) -> list[str]:
     """Другий прохід після fill_known_fields: label-матчинг (Stepstone кладе
     назву поля лише в <label for>), дати (Geburtsdatum/Eintritt), Gehalt і
     селекти. Незнайомі селекти чіпає лише якщо вони обов'язкові (інакше
@@ -313,6 +346,10 @@ def fill_extended_fields(page, salary: str | None = None) -> list[str]:
             if (inp.input_value() or "").strip():
                 continue
             meta = _el_meta(inp, labels)
+            if is_generic_label(meta):
+                # «Was ist Ihre Gehaltsvorstellung? (EUR)» стоїть заголовком групи,
+                # а label самого поля — «Value *» (StepStone ATS, 23.10.2026)
+                meta = f"{meta} {_button_context(inp)}".strip()
             if not meta:
                 continue
             is_date = (inp.get_attribute("type") or "") == "date"
@@ -378,6 +415,8 @@ def fill_extended_fields(page, salary: str | None = None) -> list[str]:
                 label_tag = f"sprache:{label}" if value else None
                 if not value:
                     filled.append(f"select-offen:{meta[:30]}")
+            elif plain_select_choice(meta, real, source)[0]:
+                value, label_tag = plain_select_choice(meta, real, source)
             elif _is_required(sel, meta):
                 # Обов'язковий незнайомий селект НЕ вгадуємо: перша опція буває
                 # «Keine» / «Nein» (Deutschkenntnisse → «Keine», 08.10.2026).

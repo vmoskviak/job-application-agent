@@ -26,3 +26,10 @@ locations: []
 # any: будь-яка згадка remote/Homeoffice/hybrid рятує чуже місто.
 # full: лише повністю віддалена робота (пошук в одному місті через дорогу).
 remote_policy: any
+# Контрактний ринок, етап 2b: файли з attachments/, які німецькі агентури
+# отримують поверх CV (Projektliste). Порожньо = лише CV.
+# agency_attachments: []
+# Контрактний ринок, етап 2b: send_policy auto = подачі йдуть без кнопки оператора;
+# daily_limits = скільки подач на день на канал (дефолт email 5, form 5).
+# send_policy: auto
+# daily_limits: {email: 5, form: 5}

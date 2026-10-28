@@ -56,18 +56,20 @@ alert() {  # alert <message> [log-tail]
     ${2:+--log-tail "$2"} $queue || true
 }
 
-operator_summary() {  # один лист оператору на добу, після вечірнього рану
-  [ "$JOBSEARCH_OPERATOR_MAIL" = "evening" ] && [ "$MODE" = "evening" ] || return 0
-  "$PY" "$ENGINE/scripts/server/operator_summary.py" --send >> "$LOG" 2>&1 \
+operator_summary() {  # один лист оператору на добу; після якого рану, вирішує report_mode клієнта
+  [ "$JOBSEARCH_OPERATOR_MAIL" = "evening" ] || return 0
+  "$PY" "$ENGINE/scripts/server/operator_summary.py" --send --run "$MODE" >> "$LOG" 2>&1 \
     || echo "[$(date)] operator_summary не надіслано" >> "$LOG"
 }
 
 # Один спільний лок на всю машину: запуски різних клієнтів і ручні сесії
-# ніколи не перетинаються (спільний ліміт підписки, один дисплей).
+# ніколи не перетинаються (спільний ліміт підписки, один дисплей). Лок чекаємо
+# до JOBSEARCH_LOCK_WAIT с (15 хв): короткий LLM-джоб inbox watcher-а тримає
+# той самий лок, і з -n нічний ран мовчки пропускався б.
 if [ -z "${JOBSEARCH_LOCK_HELD:-}" ]; then
   exec 9>"$LOCK_DIR/jobsearch-agent.lock"
-  if ! flock -n 9; then
-    echo "[$(date)] $SLUG $MODE: інший запуск активний — виходжу" >> "$LOG"
+  if ! flock -w "${JOBSEARCH_LOCK_WAIT:-900}" 9; then
+    echo "[$(date)] $SLUG $MODE: інший запуск тримає лок довше за ${JOBSEARCH_LOCK_WAIT:-900} с — виходжу" >> "$LOG"
     exit 0
   fi
 fi
@@ -76,8 +78,11 @@ fi
 # зміни/дивергенція = не тягнемо, ран іде на тому, що є, і це видно в лозі.
 if [ -z "${JOBSEARCH_LOCK_HELD:-}" ]; then
   ENGINE_BEFORE="$(git -C "$ENGINE" rev-parse HEAD 2>/dev/null || true)"
-  git -C "$ENGINE" pull --ff-only >> "$LOG" 2>&1 \
-    || echo "[$(date)] $MODE: git pull рушія failed — ран на локальному стані" >> "$LOG"
+  git -C "$ENGINE" pull --ff-only >> "$LOG" 2>&1 || {
+    echo "[$(date)] $MODE: git pull рушія failed — ран на локальному стані" >> "$LOG"
+    alert "Engine-Pull fehlgeschlagen (git pull --ff-only), Lauf auf lokalem Stand" \
+      "$(git -C "$ENGINE" status --short 2>&1 | head -20; tail -c 1500 "$LOG")"
+  }
   if [ "$ENGINE_BEFORE" != "$(git -C "$ENGINE" rev-parse HEAD 2>/dev/null || true)" ]; then
     # Цей скрипт щойно змінився на диску, а bash читає його по ходу виконання.
     # Стартуємо заново з нової версії; лок (fd 9) успадковується.
@@ -85,8 +90,24 @@ if [ -z "${JOBSEARCH_LOCK_HELD:-}" ]; then
     JOBSEARCH_LOCK_HELD=1 exec "$0" "$@"
   fi
 fi
-git -C "$ROOT" pull --rebase >> "$LOG" 2>&1 \
-  || echo "[$(date)] $MODE: git pull даних failed — ран на локальному стані" >> "$LOG"
+# Збій pull даних (22.10.2026: той самий файл створено на сервері й на Mac) раніше
+# лишав лише рядок у лозі, і всі рани дня йшли на застарілих трекерах. Тепер: недо-
+# ребейз відкочується, ран іде на локальному стані, оператор отримує алерт зі
+# списком файлів, що заважають.
+git -C "$ROOT" pull --rebase >> "$LOG" 2>&1 || {
+  git -C "$ROOT" rebase --abort >/dev/null 2>&1
+  echo "[$(date)] $MODE: git pull даних failed — ран на локальному стані" >> "$LOG"
+  alert "Datenpull fehlgeschlagen (git pull --rebase), Lauf auf lokalem Stand" \
+    "$(git -C "$ROOT" status --short 2>&1 | head -20; tail -c 1500 "$LOG")"
+}
+
+# Ринок без цього режиму (контракт поки лише evening): один рядок у лог, без
+# алерту й без зведеного листа. Інакше кожен нічний cron давав би хибний збій.
+"$PY" "$ENGINE/scripts/render_run.py" "$MODE" --check 2>> "$LOG"
+if [ $? -eq 3 ]; then
+  echo "[$(date)] $SLUG $MODE: ринок клієнта не має цього режиму — пропускаю" >> "$LOG"
+  exit 0
+fi
 
 PROMPT="$("$PY" "$ENGINE/scripts/render_run.py" "$MODE" --headless 2>> "$LOG")"
 if [ -z "$PROMPT" ] || [ ! -f "$PROMPT" ]; then
@@ -133,6 +154,13 @@ if [ -n "${BEFORE_SHA:-}" ]; then
   MSGID_RC=$?
   echo "$MSGID_OUT" >> "$LOG"
   [ $MSGID_RC -ne 0 ] && alert "Erfundene oder fehlende Msg-IDs im Tracker, bitte prüfen und korrigieren" "$MSGID_OUT"
+fi
+
+# Нові співбесіди, оферти й запити з цього рану → оператору в Telegram одразу
+# (коли в клієнта налаштовано Telegram; інакше скрипт мовчить, лишається зведення).
+if [ -n "${BEFORE_SHA:-}" ]; then
+  "$PY" "$ENGINE/scripts/server/notify_run.py" --base "$BEFORE_SHA" --run "$MODE" >> "$LOG" 2>&1 \
+    || echo "[$(date)] notify_run не вдався" >> "$LOG"
 fi
 
 # Вартовий відповідей роботодавців: чи не лежить незакрита співбесіда/запит

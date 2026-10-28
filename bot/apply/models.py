@@ -3,19 +3,22 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field, asdict
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
 # Статуси: submitted | dry_run | skipped | closed | login_required |
-#          captcha | form_unsupported | failed
+#          captcha | form_unsupported | failed | handoff | restricted | quota
+# restricted: акаунт платформи під обмеженням чи checkpoint (LinkedIn), подачі зупиняються.
+# quota: вичерпано місячний ліміт заявок платформи.
+# handoff: ATS-форму не довели до підтвердження, вкладка відкрита для оператора.
 RESULT_FILENAME = "apply_result.json"
 
 
 @dataclass
 class ApplyResult:
     status: str
-    portal: str                       # stepstone | xing
+    portal: str                       # stepstone | xing | ashby | greenhouse | lever | workable | ats
     url: str
     screenshots: list[str] = field(default_factory=list)
     confirmation_text: str = ""

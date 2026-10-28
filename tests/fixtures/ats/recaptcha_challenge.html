@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head><title>Contract Co - Apply</title></head>
+<body>
+  <form id="application">
+    <input name="email" value="candidate@example.com">
+    <button type="submit">Submit application</button>
+  </form>
+  <!-- невидимий anchor: не виклик -->
+  <iframe src="https://www.google.com/recaptcha/enterprise/anchor?k=x"
+          style="display:none" width="0" height="0"></iframe>
+  <!-- прихований bframe (Google ховає його так до показу виклику): НЕ рахується -->
+  <div style="visibility:hidden;position:absolute;top:-10000px;opacity:0">
+    <iframe src="https://www.google.com/recaptcha/enterprise/bframe?hl=en&k=x"
+            width="400" height="580"></iframe>
+  </div>
+  <!-- видимий bframe: справжній виклик, ЛИШЕ він рахується -->
+  <div style="position:fixed;top:40px;left:40px">
+    <iframe src="https://www.google.com/recaptcha/enterprise/bframe?hl=en&k=x"
+            title="recaptcha challenge expires in two minutes"
+            width="400" height="580"></iframe>
+  </div>
+  <p>Select all images with traffic lights</p>
+</body>
+</html>

@@ -39,6 +39,11 @@ ATS_DOMAINS: tuple[str, ...] = (
     "recruitee.com",
     "join.com",
     "instaffo.com",
+    # контрактний ринок: ATS англомовних роботодавців (сповіщення з окремих доменів)
+    "greenhouse-mail.io",
+    "ashbyhq.com",
+    "workablemail.com",
+    "lever.co",
 )
 
 # Класи, які потребують людини: співбесіда і запит документів/даних.
@@ -108,6 +113,32 @@ def build_employer_queries(
                 q = f"{q} {negatives}"
             queries.append(q)
     return queries
+
+
+# Скільки листів максимум читає прочісування jobs-інбоксу (sweep_query).
+SWEEP_LIMIT = 200
+
+
+def sweep_query(account: str, exclude_senders: Iterable[str], days: int = 7) -> str | None:
+    """Прочісування всього інбоксу jobs без фільтра за відправником.
+
+    Ловить роботодавця, чий домен ніде не записаний (подача через дошку,
+    відповідь з корпоративного домену). Скринька jobs — під пошук, тож без
+    алертів листів тут небагато; main особиста, і там такий запит тягнув би все.
+    Що з цього звіт, вирішує keep_sweep_item: лише лист із класом відповіді,
+    який зіставився з компанією з трекера.
+    """
+    if account != "jobs":
+        return None
+    negatives = " ".join(f"-from:{s}" for s in exclude_senders if s)
+    return f"newer_than:{days}d in:inbox {negatives}".strip()
+
+
+def keep_sweep_item(item: dict) -> bool:
+    """Лист із прочісування — відповідь роботодавця, лише якщо клас відомий
+    (відмова/співбесіда/підтвердження/запит) і компанія є в трекері.
+    Розсилка з «leider» без компанії з трекера сюди не проходить."""
+    return bool(item.get("company")) and item.get("classification") not in (None, "", "unknown")
 
 
 def needs_action(classification: str) -> bool:
@@ -206,4 +237,110 @@ def tracker_domains(tracker_path, parse_fn: Optional[callable] = None) -> list[s
         d = extract_domain(e.get("email"))
         if d and d not in out:
             out.append(d)
+    return out
+
+
+# ── Домени відправників, з яких може прийти відповідь роботодавця ─────────────
+# tracker_domains вище бачить лише legacy-рядки «Email sent» з колонкою email,
+# якої в нинішніх трекерах нема, тож на реальних трекерах повертає порожньо.
+# Роботодавець, що відповідає з власного домену (не ATS), знаходився лише
+# ручним переглядом (22.10.2026: відмови 08.09 і 18.09, знайдені через місяць).
+# Тому домени збираються з усього, що відомо про подачі: адреси й URL у
+# трекері, email/URL у пакетах заявок, плюс ручний список у accounts.yaml.
+
+# Не роботодавці: дошки, агрегатори, фриланс-платформи, скорочувачі. З їхніх
+# доменів ідуть алерти, а не відповіді, і from:<дошка> затопив би скан.
+NON_EMPLOYER_DOMAINS: frozenset[str] = frozenset({
+    "stepstone.de", "indeed.com", "indeed.de", "linkedin.com", "lnkd.in",
+    "xing.com", "arbeitsagentur.de", "interamt.de", "talent.com", "jobijoba.com",
+    "jobijoba.de", "glassdoor.com", "glassdoor.de", "get-in.de", "kleinanzeigen.de",
+    "hokify.de", "jobware.de", "monster.de", "kununu.com", "meinestadt.de",
+    "jobs.de", "gulp.de", "freelancermap.de", "freelance.de", "malt.de",
+    "upwork.com", "ycombinator.com", "google.com", "goo.gl", "bit.ly",
+    "github.com", "rp-online.de", "stellenanzeigen.de", "yourjob.de",
+})
+
+# Поштові сервіси: from:<домен> означав би всю пошту, тож тут лише повна адреса.
+FREEMAIL_DOMAINS: frozenset[str] = frozenset({
+    "gmail.com", "googlemail.com", "web.de", "gmx.de", "gmx.net", "gmx.at",
+    "outlook.com", "outlook.de", "hotmail.com", "hotmail.de", "live.com", "live.de",
+    "yahoo.com", "yahoo.de", "t-online.de", "icloud.com", "me.com", "posteo.de",
+    "mail.de", "freenet.de", "aol.com", "proton.me", "protonmail.com",
+})
+
+_SECOND_LEVEL = {"co", "com", "org", "net", "ac", "gv", "or", "gov", "edu"}
+_EMAIL_RE = r"[A-Za-z0-9._%+\-]+@([A-Za-z0-9\-]+(?:\.[A-Za-z0-9\-]+)+)"
+_URL_HOST_RE = r"https?://([A-Za-z0-9\-]+(?:\.[A-Za-z0-9\-]+)+)"
+
+
+def registrable_domain(host: str) -> str:
+    """karriere.beispiel.de → beispiel.de; beispiel.co.uk лишається як є."""
+    labels = host.lower().strip(".").split(".")
+    if len(labels) >= 3 and labels[-2] in _SECOND_LEVEL:
+        return ".".join(labels[-3:])
+    return ".".join(labels[-2:])
+
+
+def senders_from_text(text: str, own: Iterable[str] = ()) -> list[str]:
+    """Домени (для freemail — повні адреси) з email-адрес і URL у тексті."""
+    import re
+
+    own_l = {o.lower() for o in own if o}
+    out: list[str] = []
+
+    def add(s: str) -> None:
+        if s and s not in out:
+            out.append(s)
+
+    for m in re.finditer(_EMAIL_RE, text):
+        addr, dom = m.group(0).lower().strip("."), registrable_domain(m.group(1))
+        if addr in own_l or dom in NON_EMPLOYER_DOMAINS:
+            continue
+        add(addr if dom in FREEMAIL_DOMAINS else dom)
+    for m in re.finditer(_URL_HOST_RE, text):
+        dom = registrable_domain(m.group(1))
+        if dom not in NON_EMPLOYER_DOMAINS and dom not in FREEMAIL_DOMAINS:
+            add(dom)
+    return out
+
+
+def application_texts(applications_dir) -> list[str]:
+    """email/URL-поля з пакетів заявок: email_draft.json і generate.py."""
+    import re
+    from pathlib import Path as _Path
+
+    root = _Path(applications_dir) if applications_dir else None
+    if root is None or not root.is_dir():
+        return []
+    texts: list[str] = []
+    for f in sorted(root.glob("*/*/email_draft.json")):
+        m = re.search(r'"to":\s*"([^"]*)"', f.read_text(encoding="utf-8", errors="replace"))
+        if m:
+            texts.append(m.group(1))
+    field_re = re.compile(r"\b(?:email|application_url|source_url)=(['\"])(.*?)\1")
+    for f in sorted(root.glob("*/*/generate.py")):
+        texts += [m.group(2) for m in field_re.finditer(
+            f.read_text(encoding="utf-8", errors="replace"))]
+    return texts
+
+
+def employer_senders(tracker_path, applications_dir=None, extra: Iterable[str] = (),
+                     own: Iterable[str] = ()) -> list[str]:
+    """Усі відомі домени/адреси роботодавців: accounts.yaml → employer_senders,
+    трекер, пакети заявок. Домени ATS додає build_employer_queries сам."""
+    from pathlib import Path as _Path
+
+    own = list(own)
+    out: list[str] = []
+    for s in extra or ():
+        s = str(s).strip().lstrip("@").lower()
+        if s and s not in out:
+            out.append(s)
+    p = _Path(tracker_path)
+    sources = [p.read_text(encoding="utf-8")] if p.exists() else []
+    sources += application_texts(applications_dir)
+    for text in sources:
+        for s in senders_from_text(text, own):
+            if s not in out and s not in ATS_DOMAINS:
+                out.append(s)
     return out

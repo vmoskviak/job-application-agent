@@ -13,7 +13,7 @@ def test_portal_from_url():
     assert portal_from_url("https://www.xing.com/jobs/x") == "xing"
     assert portal_from_url("https://www.linkedin.com/jobs/view/1") is None
     assert portal_from_url("https://karriere.foo.de/1") is None
-    assert portal_from_url("https://jobs.example-versicherung.de/de/sites/EXAMPLE/job/10645/") == "oracle_cx"
+    assert portal_from_url("https://jobs.beispielwerk.example/de/sites/BEISPIELWERK/job/100001/") == "oracle_cx"
     assert portal_from_url("https://foo.example.com/en/sites/CX_1/job/123") == "oracle_cx"
 
 

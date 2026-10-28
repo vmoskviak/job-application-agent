@@ -22,8 +22,22 @@ gmail:
     may_delete: false
     rescue_trash: false          # true, якщо власниця сама видаляє відповіді
 send_from: jobs
+# Додаткові домени чи адреси, з яких відповідають роботодавці, якщо їх нема ні
+# в трекері, ні в пакетах заявок (подача через дошку, відповідь з домену групи).
+# employer_scan шукає їх разом із доменами ATS.
+employer_senders: []
+# - beispiel-gruppe.de
 playwright_profile: __SLUG__
 # Облікові дані порталів для автологіну (XING не тримає сесію між запусками).
 # Файл лише на машині запуску, chmod 600, у git не потрапляє:
 #   {"xing": {"username": "...", "password": "..."}}
 # portal_credentials: /root/.__SLUG__-portal-credentials.json
+# Telegram оператора. Токен лише в оточенні сервера (ім'я змінної тут).
+#   mode: cards  — власний бот клієнта з кнопками (контрактний ринок, етап 2a)
+#   mode: notify — спільний бот оператора, лише сповіщення про співбесіди й запити,
+#                  трекер веде ранковий агент; сервіс бота для клієнта не вмикати
+# telegram:
+#   token_env: JOBSEARCH_TELEGRAM_TOKEN_OPERATOR
+#   chat_id: 0
+#   mode: notify
+#   lang: uk

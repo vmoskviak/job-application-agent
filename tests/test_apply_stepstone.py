@@ -68,7 +68,7 @@ def _patch_flow(monkeypatch, confirmations):
     monkeypatch.setattr(detect, "classify_apply_page", lambda url, html: "stepstone_quick")
     monkeypatch.setattr(forms, "accept_cookies", lambda page: None)
     monkeypatch.setattr(forms, "fill_known_fields", lambda page: [])
-    monkeypatch.setattr(forms, "fill_extended_fields", lambda page, salary: [])
+    monkeypatch.setattr(forms, "fill_extended_fields", lambda page, salary, source=None: [])
     monkeypatch.setattr(forms, "upload_documents_mapped",
                         lambda page, cv, anschreiben, zeugnisse: [])
     monkeypatch.setattr(forms, "screenshot", lambda page, app_dir, name: name)
@@ -114,7 +114,7 @@ def test_normal_submit_click_still_works(monkeypatch, tmp_path):
 
 def test_confirmation_patterns_stepstone_2026_final_page_only():
     """Інтерстишл «Bewerbung wird …» не є підтвердженням: після нього StepStone
-    може передати заявку на сайт роботодавця (будівельний концерн, 08.10.2026)."""
+    може передати заявку на сайт роботодавця."""
     from bot.apply import forms
     class P:
         def __init__(self, body): self._b = body
@@ -154,3 +154,29 @@ def test_shows_already_applied_reads_apply_button():
         def locator(self, sel): return Loc(self.texts)
     assert shows_already_applied(Page(["", "Schon beworben"]))
     assert not shows_already_applied(Page(["Ich bin interessiert"]))
+
+
+def test_plain_select_choice_currency_and_source():
+    """Кастомні питання ATS у StepStone-формі (23.10.2026): обов'язкові «Währung»
+    і «Wie haben Sie von der Position erfahren» лишались порожніми, submit
+    неактивний, заявка йшла в manual."""
+    from bot.apply.forms import plain_select_choice
+
+    cur = [("1", "USD"), ("2", "EUR"), ("3", "CHF")]
+    assert plain_select_choice("währung *", cur) == ("2", "währung")
+    src = [("a", "Zeitung"), ("b", "StepStone"), ("c", "Sonstiges")]
+    assert plain_select_choice("wie haben sie von der position erfahren?", src,
+                               source="StepStone") == ("b", "quelle:StepStone")
+    # без порталу або без такої опції — не вгадуємо
+    assert plain_select_choice("wie haben sie von der position erfahren?", src) == (None, None)
+    assert plain_select_choice("wie haben sie von der position erfahren?",
+                               [("a", "Zeitung")], source="StepStone") == (None, None)
+    assert plain_select_choice("haben sie einen führerschein?", [("j", "Ja"), ("n", "Nein")]) == (None, None)
+
+
+def test_generic_value_label_needs_group_question():
+    from bot.apply.forms import is_generic_label
+
+    assert is_generic_label("value *") and is_generic_label("") and is_generic_label("Wert")
+    assert is_generic_label("question-7f3a-value value *")
+    assert not is_generic_label("gehaltsvorstellung value")

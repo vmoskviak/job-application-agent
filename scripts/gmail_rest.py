@@ -30,7 +30,7 @@ from email.encoders import encode_base64
 from email.mime.base import MIMEBase
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
-from email.utils import format_datetime
+from email.utils import format_datetime, parseaddr
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -127,9 +127,18 @@ def main():
         hdr = {h["name"]: h["value"] for h in orig["payload"]["headers"]}
         body = Path(argv[1]).read_text()
         # Без явного [to] відповідь іде відправнику оригіналу (Reply-To, далі From).
-        # Раніше бралось To, а To вхідного листа — це власна адреса: 14.10.2026
-        # відповідь роботодавцю пішла сама собі.
-        to = argv[2] if len(argv) > 2 else hdr.get("Reply-To") or hdr.get("From")
+        # Раніше бралось To, а To вхідного листа — це власна адреса, і
+        # відповідь роботодавцю йшла нам самим. Виняток: оригінал наш власний лист
+        # (follow-up на подачу відповідає на нашу ж заявку), тоді адресат той,
+        # кому ми писали, інакше follow-up ішов би нам самим (рев'ю 26.10.2026).
+        from_addr = parseaddr(hdr.get("From", ""))[1].lower()
+        own = {str(acc.get("address", "")).lower() for acc in _accounts.get("gmail", {}).values()}
+        if len(argv) > 2:
+            to = argv[2]
+        elif from_addr in own:
+            to = hdr.get("To") or hdr.get("Reply-To") or hdr.get("From")
+        else:
+            to = hdr.get("Reply-To") or hdr.get("From")
         subj = hdr.get("Subject", "")
         if not subj.lower().startswith("re:"):
             subj = "Re: " + subj
@@ -171,9 +180,9 @@ def main():
         attached = []
         for path in draft.get("attachments", []):
             fp = Path(path)
-            if not fp.exists():
-                print(f"WARN attachment missing: {fp}", file=sys.stderr)
-                continue
+            if not fp.is_file() or fp.stat().st_size == 0:
+                # Заявка без CV не йде ніколи (рев'ю 2b): краще жодного листа, ніж лист без вкладення.
+                sys.exit(f"attachment missing or empty, nothing sent: {fp}")
             ctype, _ = mimetypes.guess_type(str(fp))
             maintype, subtype = (ctype or "application/octet-stream").split("/", 1)
             part = MIMEBase(maintype, subtype)

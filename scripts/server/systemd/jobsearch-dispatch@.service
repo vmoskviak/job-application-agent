@@ -1,0 +1,10 @@
+# Один прохід диспетчера подач одного клієнта; запускає таймер jobsearch-dispatch@<slug>.timer.
+# Тіньовий тиждень: JOBSEARCH_DISPATCH_DRY_RUN=1 у /root/.claude-env (юніт не редагувати:
+# для oneshot drop-in з ExecStart= додає другий запуск, а не замінює перший).
+[Unit]
+Description=jobsearch lead dispatch (%i)
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/opt/jobsearch-autopilot/scripts/server/run_service.sh scripts/dispatch_leads.py %i

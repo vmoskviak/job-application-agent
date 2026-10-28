@@ -5,7 +5,9 @@
 `send_from` активного клієнта) і шле лист оператору. Працює навіть коли
 claude CLI / npx / MCP лежать.
 
-Адресат: env JOBSEARCH_ALERT_TO (задається в /root/.claude-env).
+Адресат: env JOBSEARCH_ALERT_TO (задається в /root/.claude-env). Якщо у клієнта
+налаштовано Telegram (accounts.yaml → telegram), алерт іде туди одразу, а пошта
+й черга зведеного листа не використовуються.
 
 Використання:
     send_alert.py --run morning --message "timeout 3h" [--log-tail "..."]
@@ -105,6 +107,17 @@ def main() -> int:
     parser.add_argument("--queue", action="store_true",
                         help="не слати, а поставити в чергу до вечірнього листа")
     args = parser.parse_args()
+    from bot import notify as _notify
+
+    if _notify.configured(_c):
+        # Telegram є: алерт іде одразу, і в чергу, і в лист не стає (оператор
+        # читає Telegram, пошта рушія йому не потрібна)
+        try:
+            _notify.notify(_c, _notify.alert_text(args.run, args.message, args.log_tail, _c.telegram["lang"]))
+            print(f"[alert] telegram: {args.message[:80]}")
+            return 0
+        except Exception as e:  # noqa: BLE001 — Telegram упав: далі старим каналом
+            print(f"[alert] telegram FAILED ({e}), далі поштою", file=sys.stderr)
     if args.queue:
         from bot import operator_report as rep
         rep.queue_alert(_c.var / "run", args.run, args.message, args.log_tail)

@@ -1,0 +1,12 @@
+# Щогодини вдень о :10 (07:10 … 23:10), з випадковою затримкою до 2 хв,
+# пропущені запуски не наздоганяються. Вночі йдуть cron-рани рушія.
+[Unit]
+Description=jobsearch inbox watch timer (%i)
+
+[Timer]
+OnCalendar=*-*-* 07..23:10:00
+RandomizedDelaySec=120
+Persistent=false
+
+[Install]
+WantedBy=timers.target

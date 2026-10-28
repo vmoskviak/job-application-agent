@@ -187,3 +187,26 @@ def test_evening_mail_mode_sends_operator_nothing_at_night(monkeypatch):
     assert "var/run/operator_evening_YYYY-MM-DD.html" in evening
     assert "Playwright-Login nötig`, текст німецькою" not in evening
     assert "{{" not in evening and "{%" not in evening
+
+
+
+def test_telegram_config_defaults():
+    """accounts.yaml → telegram: token лише через env, chat_id порожній = ніхто не допущений."""
+    from pathlib import Path as _P
+    ex = _P(__file__).resolve().parent.parent / "examples" / "clients"
+    from dataclasses import replace
+    c = client.load("jordan", base=ex)
+    assert c.telegram == {"token_env": "JOBSEARCH_TELEGRAM_TOKEN_JORDAN", "chat_id": 424242,
+                          "mode": "cards", "lang": c.report_lang}
+    bare = replace(c, accounts={**c.accounts, "telegram": {}})
+    assert bare.telegram["token_env"] == "JOBSEARCH_TELEGRAM_TOKEN_JORDAN" and bare.telegram["chat_id"] is None
+    zero = replace(c, accounts={**c.accounts, "telegram": {"chat_id": 0}})
+    assert zero.telegram["chat_id"] is None
+    # спільний бот оператора на кількох клієнтів: режим notify і мова сповіщень окремо від report_lang
+    shared = replace(c, accounts={**c.accounts, "telegram": {
+        "token_env": "JOBSEARCH_TELEGRAM_TOKEN_OPERATOR", "chat_id": 7, "mode": "notify", "lang": "uk"}})
+    assert shared.telegram == {"token_env": "JOBSEARCH_TELEGRAM_TOKEN_OPERATOR", "chat_id": 7,
+                               "mode": "notify", "lang": "uk"}
+    import pytest
+    with pytest.raises(ValueError):
+        _ = replace(c, accounts={**c.accounts, "telegram": {"mode": "loud"}}).telegram

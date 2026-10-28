@@ -344,3 +344,96 @@ def test_triage_stepstone_slug_city():
     ])
     assert kept == ["https://www.stepstone.de/stellenangebote--Teamassistenz-Bergisch-Gladbach-9999-inline.html"]
     assert dropped[0]["reason"] == "outside_nrw_slug"
+
+
+# --- стан «вже бачені» для алерт-лінків (fix 22.10.2026: Gmail-запит newer_than:2d
+# повторював усі вчорашні лінки через скрапінг, фільтр і cover notes) ---
+
+def _live_result(url: str):
+    from bot.generators.intake import JobData
+    from bot.scrapers.models import IntakeResult
+    return IntakeResult(
+        job=JobData(title="Android Developer", company="ACME", location="Remote",
+                    description="Kotlin " * 40, email=None, application_url=None,
+                    source_url=url, is_portal=True),
+        liveness="live", intake_method="httpx",
+    )
+
+
+def _failed_result(url: str):
+    from bot.scrapers.models import IntakeResult
+    return IntakeResult(job=None, liveness="failed", intake_method="httpx",
+                        reason="timeout")
+
+
+def test_seen_key_ignores_query_fragment_and_host_case():
+    from bot.generators.discover import seen_key
+    a = seen_key("https://WWW.linkedin.com/jobs/view/123?trk=mail#top")
+    b = seen_key("https://www.linkedin.com/jobs/view/123/")
+    assert a == b == "www.linkedin.com/jobs/view/123"
+
+
+def test_main_skips_seen_urls_and_records_new_ones(monkeypatch, tmp_path, capsys):
+    import bot.generators.discover as discover
+    import bot.scrapers.browser as browser
+    monkeypatch.setattr(browser, "shutdown_browser", lambda: None)
+    calls: list[str] = []
+
+    def fake_intake(url, use_playwright=True):
+        calls.append(url)
+        if url.endswith("/9"):
+            return _failed_result(url)
+        return _live_result(url)
+
+    monkeypatch.setattr(discover, "intake_with_meta", fake_intake)
+    urls = tmp_path / "urls.txt"
+    urls.write_text("https://www.linkedin.com/jobs/view/1\n"
+                    "https://www.linkedin.com/jobs/view/9\n", encoding="utf-8")
+    state = tmp_path / "state" / "discover_seen.json"
+
+    discover.main(urls, use_playwright=False, seen_state=state)
+    assert calls == ["https://www.linkedin.com/jobs/view/1",
+                     "https://www.linkedin.com/jobs/view/9"]
+    # живий лінк запам'ятали, збій мережі — ні (наступного разу спробуємо знову)
+    assert discover.load_seen(state) == {"www.linkedin.com/jobs/view/1"}
+
+    calls.clear()
+    urls.write_text("https://www.linkedin.com/jobs/view/1?utm=x\n"
+                    "https://www.linkedin.com/jobs/view/9\n"
+                    "https://www.linkedin.com/jobs/view/2\n", encoding="utf-8")
+    discover.main(urls, use_playwright=False, seen_state=state)
+    assert calls == ["https://www.linkedin.com/jobs/view/9",
+                     "https://www.linkedin.com/jobs/view/2"]
+    assert "вже бачені: 1" in capsys.readouterr().err
+    assert discover.load_seen(state) == {"www.linkedin.com/jobs/view/1",
+                                         "www.linkedin.com/jobs/view/2"}
+
+
+def test_main_writes_empty_digest_when_everything_seen(monkeypatch, tmp_path):
+    import json
+    import bot.generators.discover as discover
+    import bot.scrapers.browser as browser
+    monkeypatch.setattr(browser, "shutdown_browser", lambda: None)
+    monkeypatch.setattr(discover, "intake_with_meta",
+                        lambda url, use_playwright=True: (_ for _ in ()).throw(AssertionError("fetch")))
+    state = tmp_path / "discover_seen.json"
+    discover.commit_seen(state, {"www.linkedin.com/jobs/view/1"})
+    urls = tmp_path / "urls.txt"
+    urls.write_text("https://www.linkedin.com/jobs/view/1\n", encoding="utf-8")
+    discover.main(urls, use_playwright=False, seen_state=state)
+    from datetime import date
+    out = tmp_path / f"discover_digest_{date.today():%Y-%m-%d}.json"
+    assert json.loads(out.read_text(encoding="utf-8")) == []
+
+
+def test_main_without_state_keeps_old_behaviour(monkeypatch, tmp_path):
+    import bot.generators.discover as discover
+    import bot.scrapers.browser as browser
+    monkeypatch.setattr(browser, "shutdown_browser", lambda: None)
+    monkeypatch.setattr(discover, "intake_with_meta",
+                        lambda url, use_playwright=True: _live_result(url))
+    urls = tmp_path / "urls.txt"
+    urls.write_text("https://www.linkedin.com/jobs/view/1\n", encoding="utf-8")
+    discover.main(urls, use_playwright=False)
+    discover.main(urls, use_playwright=False)
+    assert not list(tmp_path.glob("**/discover_seen.json"))

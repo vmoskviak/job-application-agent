@@ -5,7 +5,9 @@ from pathlib import Path
 from bot import client as _client
 
 # Окремий браузерний профіль на клієнта: у ньому живуть логіни порталів.
-_name = _client.active().playwright_profile
+_active = _client.active()
+_name = _active.playwright_profile
+_market = _active.market
 PROFILE_DIR = Path.home() / ".playwright-mcp" / _name
 LOCK_FILE = Path(f"/tmp/jobsearch-playwright-{_name}.lock")
 
@@ -22,6 +24,11 @@ def check_platform_sessions() -> dict[str, str]:
 
 
 def main() -> None:
+    if _market == "contract":
+        # Контрактний потік (HN, email-алерти, discover) нікуди не логіниться;
+        # профіль Playwright створиться сам при першому запуску браузера.
+        print("OK: contract market, portal logins not needed; profile dir:", PROFILE_DIR)
+        sys.exit(0)
     info = check_platform_sessions()
     if info.get("profile") == "missing":
         print("LOGIN REQUIRED: profile dir missing:", PROFILE_DIR)

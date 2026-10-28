@@ -1,0 +1,49 @@
+{
+ "id": 900001,
+ "type": "story",
+ "children": [
+  {
+   "id": 1001,
+   "type": "comment",
+   "text": "Acme Robotics | Senior Python Contractor | Berlin | REMOTE | 6 months<p>We build robots. Apply at jobs@example.com or https://example.com/careers/python",
+   "children": []
+  },
+  {
+   "id": 1002,
+   "type": "comment",
+   "text": "Beispiel GmbH | Data Engineer | Vienna, Austria | ONSITE<p>Details: https://example.org/jobs/1",
+   "children": [
+    {
+     "id": 1003,
+     "type": "comment",
+     "text": "Is this still open?",
+     "children": []
+    }
+   ]
+  },
+  {
+   "id": 1004,
+   "type": "comment",
+   "text": "Tiny startup building tools for fictional bakeries and more things here",
+   "children": []
+  },
+  {
+   "id": 1005,
+   "type": "comment",
+   "text": "R&amp;D Labs | Backend Dev | Remote<p>Rust &amp; Go, apply: &lt;jobs@example.net&gt;<br>Great team",
+   "children": []
+  },
+  {
+   "id": 1006,
+   "type": "comment",
+   "text": "Link Co | Platform Engineer | Remote<p>Apply: <a href=\"https://jobs.example.com/apply/123\" rel=\"nofollow\">https://jobs.example.com/ap...</a>",
+   "children": []
+  },
+  {
+   "id": 1007,
+   "type": "comment",
+   "text": "Onsite Co | Dev | Berlin | NO REMOTE<p>Office only",
+   "children": []
+  }
+ ]
+}

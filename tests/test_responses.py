@@ -42,20 +42,20 @@ def test_classify_response_transliterated_german():
 def test_match_company_eszett_vs_ss():
     """Регресія: назва з ß не матчилась із доменом через ss."""
     from bot.generators.responses import match_response_to_company
-    resp = {"from": "bewerbung@grosswerk.nrw",
+    resp = {"from": "bewerbung@spasswerk.beispiel",
             "subject": "Ihre Bewerbung, Kennung 5671",
             "body": "Sehr geehrte Frau Mustermann, ..."}
-    companies = ["Großwerk.NRW", "Andere Firma GmbH"]
-    assert match_response_to_company(resp, companies) == "Großwerk.NRW"
+    companies = ["Spaßwerk.Beispiel", "Andere Firma GmbH"]
+    assert match_response_to_company(resp, companies) == "Spaßwerk.Beispiel"
 
 
 def test_match_company_transliterated_body():
     from bot.generators.responses import match_response_to_company
-    resp = {"from": "noreply@bewerbermanagement.net",
-            "subject": "Ihre Bewerbung bei Grosswerk.NRW",
-            "body": "vielen Dank fuer Ihre Bewerbung bei Grosswerk.NRW"}
-    companies = ["Großwerk.NRW"]
-    assert match_response_to_company(resp, companies) == "Großwerk.NRW"
+    resp = {"from": "noreply@ats.example",
+            "subject": "Ihre Bewerbung bei Spasswerk.Beispiel",
+            "body": "vielen Dank fuer Ihre Bewerbung bei Spasswerk.Beispiel"}
+    companies = ["Spaßwerk.Beispiel"]
+    assert match_response_to_company(resp, companies) == "Spaßwerk.Beispiel"
 
 
 def test_parse_tracker_extracts_sent_entries(tmp_path):
@@ -93,3 +93,38 @@ def test_extract_domain_from_email():
     assert extract_domain("ts-bewerben.de@kontora.example") == "kontora.example"
     assert extract_domain("karriere@firma.de") == "firma.de"
     assert extract_domain(None) is None
+
+
+def test_classify_english_ats_replies():
+    """Контрактний ринок: Greenhouse-лист «Thank you for applying» ішов як unknown."""
+    from bot.generators.responses import classify_response
+
+    assert classify_response("Thank you for applying to Beispiel Labs! Our team will review it.") == "confirmed"
+    assert classify_response("Unfortunately, we have decided not to move forward with your application.") == "rejected"
+    assert classify_response("We decided to move forward with other candidates at this time.") == "rejected"
+
+
+def test_classify_reads_only_the_new_part_of_a_reply():
+    # 28.10.2026: запрошення на дзвінок стало «rejected» через «leider» у процитованому
+    # нижче листі кандидатки
+    from bot.generators.responses import classify_response, strip_quoted
+    body = ("Sehr geehrte Frau Beispiel,\n\ndas ist kein Problem.\nMorgen ist ein Termin frei geworden.\n"
+            "Ich kann Sie gerne um 17:30 Uhr anrufen.\n\nMit freundlichen Grüßen\nA. Muster\n\n"
+            "-----Ursprüngliche Nachricht-----\nVon: Erika Beispiel <erika@example.com>\n"
+            "Gesendet: Donnerstag, 22. Oktober 2026 14:34\nAn: Posteingang\nBetreff: Re: Tätigkeit\n\n"
+            "leider kann ich heute nicht.")
+    assert "leider" not in strip_quoted(body)
+    assert classify_response(body) == "interview"
+    gmail = "Danke, Gespräch am Montag passt.\n\nAm Mo., 27. Okt. 2026 schrieb Erika <e@example.com>:\n> leider nein"
+    assert classify_response(gmail) == "interview"
+    outlook_en = "We'd like to interview you.\nFrom: Erika\nSent: Monday\nTo: HR\nSubject: Re\n\nunfortunately"
+    assert classify_response(outlook_en) == "interview"
+
+
+def test_soft_regret_yields_to_interview_but_hard_rejection_wins():
+    from bot.generators.responses import classify_response
+    assert classify_response("Leider nur telefonisch: wir möchten Sie zu einem Gespräch einladen") == "interview"
+    assert classify_response("Nach unserem Gespräch müssen wir Ihnen leider absagen") == "rejected"
+    assert classify_response("Sie sind leider nicht mit in die engere Wahl gekommen") == "rejected"
+    assert classify_response("Leider können wir Ihnen nichts anbieten") == "rejected"
+    assert classify_response("> leider absage") == "rejected"  # лист лише з цитати читається як є

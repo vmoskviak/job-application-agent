@@ -1,0 +1,107 @@
+{
+  "greenhouse_confirmed_en": {
+    "from": "Example Co <no-reply@eu.greenhouse-mail.io>",
+    "subject": "Thank you for applying to Example Co",
+    "body": "Thank you for applying to Example Co. We have received your application for the Senior Android Engineer role and will be in touch once we have reviewed it.",
+    "company": "Example Co",
+    "classification": "confirmed"
+  },
+  "ats_rejected_en": {
+    "from": "Example Co <hello@hire.lever.co>",
+    "subject": "Update on your application",
+    "body": "Thank you for your interest in Example Co. Unfortunately we have decided not to move forward with your application at this time. We wish you all the best.",
+    "company": "Example Co",
+    "classification": "rejected"
+  },
+  "company_interview_de": {
+    "from": "Recruiting <jobs@example-co.de>",
+    "subject": "Ihre Bewerbung als Android Engineer",
+    "body": "Guten Tag Herr Example, vielen Dank für Ihre Bewerbung. Wir möchten Sie gern zu einem Gespräch einladen. Passt Ihnen Donnerstag um 10 Uhr per Teams? Bitte geben Sie kurz Bescheid.",
+    "company": "Example Co",
+    "classification": "interview"
+  },
+  "company_info_request_de": {
+    "from": "Recruiting <jobs@example-co.de>",
+    "subject": "Rückfrage zu Ihrer Bewerbung",
+    "body": "Guten Tag Herr Example, für die weitere Prüfung bitte senden Sie uns noch Ihre Verfügbarkeit und Ihren Stundensatz. Vielen Dank im Voraus.",
+    "company": "Example Co",
+    "classification": "info_request"
+  },
+  "agency_outreach_de": {
+    "from": "S. Berater <s.berater@mail.example-agentur.de>",
+    "subject": "Android Projekt bei einem Kunden in NRW",
+    "body": "Hallo Herr Example, ich bin auf Ihr Profil aufmerksam geworden. Für einen Kunden suchen wir einen Android-Entwickler, Projektlaufzeit sechs Monate, remote mit gelegentlichen Terminen vor Ort. Hätten Sie Interesse? Dann schicken Sie mir gern Ihr Profil und Ihren Stundensatz.",
+    "company": null,
+    "classification": "unknown"
+  },
+  "linkedin_inmail_de": {
+    "from": "Max Muster via LinkedIn <inmail-hit-reply@linkedin.com>",
+    "subject": "Dein Plan für nächstes Jahr?",
+    "body": "Hallo, sehr spannendes Profil. Was muss eine Stelle beinhalten, damit du dich bewirbst? Wie interessant ist eine Übersicht möglicher Positionen für dich? Ich betreue aktuell mehrere Positionen im Bereich AI und Softwareentwicklung.",
+    "company": null,
+    "classification": "unknown"
+  },
+  "malt_invitation_de": {
+    "from": "Malt <noreply@malt.com>",
+    "subject": "Neue Nachricht von einem Kunden",
+    "body": "Ein Kunde hat dir auf Malt eine Nachricht geschickt: Wir suchen einen Android-Freelancer für drei Monate ab Dezember. Antworte direkt in Malt, um das Projekt zu besprechen.",
+    "company": null,
+    "classification": "unknown"
+  },
+  "upwork_message_en": {
+    "from": "Upwork <room_12345@upwork.com>",
+    "subject": "New message from a client",
+    "body": "You have a new message on Upwork. Hi, I would like to invite you to my job: migrate an Android app to the latest target SDK. Please reply if you are available this month.",
+    "company": null,
+    "classification": "unknown"
+  },
+  "freelance_newsletter_de": {
+    "from": "Example Portal <team@example-portal.de>",
+    "subject": "Noch 24 Stunden: Ihr Willkommens-Rabatt läuft morgen ab",
+    "body": "Steigen Sie noch heute als Premium-Mitglied ein und sparen Sie 15 Prozent. Das Angebot gilt nur bis morgen.",
+    "company": null,
+    "classification": "unknown"
+  },
+  "djinni_weekly_uk": {
+    "from": "Example Board <magic@example-board.example>",
+    "subject": "Статистика за тиждень",
+    "body": "Ваш тиждень: переглянули 1 вакансію, відгукнулися на 1. Рекрутери переглянули профіль 0 разів.",
+    "company": null,
+    "classification": "unknown"
+  },
+  "stranger_en": {
+    "from": "Someone <someone@mail.example>",
+    "subject": "Hello",
+    "body": "Hi, are you available for a quick chat about a project next week? Let me know what works for you.",
+    "company": null,
+    "classification": "unknown"
+  },
+  "linkedin_profile_views_en": {
+    "from": "LinkedIn <notifications-noreply@linkedin.com>",
+    "subject": "You appeared in 3 searches this week",
+    "body": "People are viewing your profile. See who viewed your profile and what they searched for, and update your profile to be found more often.",
+    "company": null,
+    "classification": "unknown"
+  },
+  "xing_profile_views_de": {
+    "from": "XING <notification@xing.com>",
+    "subject": "Wer hat sich Ihr Profil angesehen?",
+    "body": "Drei Personen haben sich diese Woche Ihr Profil angesehen. Sehen Sie, wer sich für Sie interessiert.",
+    "company": null,
+    "classification": "unknown"
+  },
+  "gulp_alert_en": {
+    "from": "Example Professional <alerts@example-agency.de>",
+    "subject": "'Android Kotlin \"Jetpack Compose\"': New results for your stored search",
+    "body": "This notification contains new projects matching your stored search. Senior DevOps Engineer, Freiburg, start November. Open the project to apply. Manage your notification settings in the application center.",
+    "company": null,
+    "classification": "unknown"
+  },
+  "freelancermap_alert_de": {
+    "from": "freelancermap <office@freelancermap.de>",
+    "subject": "Android Freiberuflich - Anzahl neue Projekte: 2",
+    "body": "Hallo, unser Projektagent hat neue Aufträge zu Ihrer gespeicherten Suche gefunden. Ihr Projektagent ist noch nicht vollständig: Einige Angaben fehlen in Ihrem Profil.",
+    "company": null,
+    "classification": "unknown"
+  }
+}

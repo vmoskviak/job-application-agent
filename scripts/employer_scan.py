@@ -27,12 +27,15 @@ sys.path.insert(0, str(REPO / "scripts"))
 import gmail_rest as g  # noqa: E402
 from alert_volume import ALL_SENDERS  # noqa: E402
 from bot.generators.employer_scan import (  # noqa: E402
+    SWEEP_LIMIT,
     build_employer_queries,
+    employer_senders,
+    keep_sweep_item,
+    sweep_query,
     exit_code,
     is_closed,
     tracker_known_msgids,
     summarize,
-    tracker_domains,
     tracker_status_by_company,
     scan_accounts,
 )
@@ -48,6 +51,8 @@ TRACKER = _client.active().tracker
 OUR_ADDRESSES = tuple(
     acc["address"] for acc in _client.active().accounts.get("gmail", {}).values()
 )
+# + адреса з CV (profile.yaml → email): вона в трекері, але це не роботодавець
+_OWN = tuple(a for a in (*OUR_ADDRESSES, _client.active().profile.get("email")) if a)
 
 
 def _get(account: str, path: str, **params):
@@ -110,8 +115,38 @@ def _thread_answered(account: str, thread_id: str) -> bool:
     return False
 
 
+def _item(account: str, mid: str, companies: list[str]) -> dict | None:
+    """Лист → елемент звіту; None для наших власних листів."""
+    msg = _get(account, f"messages/{mid}", format="full")
+    hdr = {h["name"]: h["value"] for h in msg["payload"]["headers"]}
+    frm = hdr.get("From", "")
+    if any(a in frm.lower() for a in OUR_ADDRESSES):
+        return None
+    subject = hdr.get("Subject", "")
+    body = _plain_body(msg["payload"])
+    classification = classify_response(f"{body} {subject}")
+    resp = {"from": frm, "subject": subject, "body": body}
+    return {
+        "message_id": mid,
+        "thread_id": msg.get("threadId"),
+        "account": account,
+        "date": hdr.get("Date", "")[:31],
+        "from": frm,
+        "subject": subject,
+        "classification": classification,
+        "body": body[:3000],   # inbox watcher: чернетка відповіді пишеться по тексту листа
+        "company": match_response_to_company(resp, companies),
+        "thread_answered": (
+            _thread_answered(account, msg["threadId"])
+            if classification in ("interview", "info_request") else None
+        ),
+    }
+
+
 def scan(account: str, days: int, companies: list[str], tracker: Path = TRACKER) -> list[dict]:
-    domains = tracker_domains(tracker)
+    client = _client.active()
+    domains = employer_senders(tracker, client.applications,
+                               client.accounts.get("employer_senders") or [], _OWN)
     queries = build_employer_queries(account, domains, exclude_senders=ALL_SENDERS, days=days)
     seen_ids: set[str] = set()
     items: list[dict] = []
@@ -120,29 +155,19 @@ def scan(account: str, days: int, companies: list[str], tracker: Path = TRACKER)
             if mid in seen_ids:
                 continue
             seen_ids.add(mid)
-            msg = _get(account, f"messages/{mid}", format="full")
-            hdr = {h["name"]: h["value"] for h in msg["payload"]["headers"]}
-            frm = hdr.get("From", "")
-            if any(a in frm.lower() for a in OUR_ADDRESSES):
-                continue  # наші ж листи
-            subject = hdr.get("Subject", "")
-            body = _plain_body(msg["payload"])
-            classification = classify_response(f"{body} {subject}")
-            resp = {"from": frm, "subject": subject, "body": body}
-            items.append({
-                "message_id": mid,
-                "thread_id": msg.get("threadId"),
-                "account": account,
-                "date": hdr.get("Date", "")[:31],
-                "from": frm,
-                "subject": subject,
-                "classification": classification,
-                "company": match_response_to_company(resp, companies),
-                "thread_answered": (
-                    _thread_answered(account, msg["threadId"])
-                    if classification in ("interview", "info_request") else None
-                ),
-            })
+            item = _item(account, mid, companies)
+            if item is not None:
+                items.append(item)
+
+    # Друге коло: роботодавець без відомого домену (див. sweep_query)
+    sweep = sweep_query(account, ALL_SENDERS, days=days)
+    if sweep:
+        fresh = [m for m in _ids(account, sweep) if m not in seen_ids][:SWEEP_LIMIT]
+        for mid in fresh:
+            seen_ids.add(mid)
+            item = _item(account, mid, companies)
+            if item is not None and keep_sweep_item(item):
+                items.append({**item, "via": "sweep"})
     return items
 
 
@@ -167,8 +192,13 @@ def main() -> int:
         return 1
 
     items: list[dict] = []
+    seen: set[str] = set()
     for acc in accounts:
-        items += scan(acc, args.days, companies, tracker)
+        # jobs і main бувають однією скринькою (той самий creds_dir): лист один
+        for item in scan(acc, args.days, companies, tracker):
+            if item["message_id"] not in seen:
+                seen.add(item["message_id"])
+                items.append(item)
 
     # Eingangsbestätigung від того самого роботодавця теж ловиться як interview
     # (у тексті є «Vorstellungsgespräch»). Якщо трекер уже знає про співбесіду —

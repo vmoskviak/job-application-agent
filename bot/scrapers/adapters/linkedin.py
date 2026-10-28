@@ -32,11 +32,45 @@ def _extract_location(text: str) -> str:
     return f"{location} ({workplace})" if workplace else location
 
 
+def _guest_markup(soup: BeautifulSoup, page: PageFetch) -> JobData | None:
+    """Гостьова сторінка /jobs/view/ через httpx (сервер без профілю): опис лежить у
+    .show-more-less-html__markup, а не в inner_text; критерії («Employment type:
+    Contract») ідуть попереду опису, щоб їх бачив engagement-класифікатор."""
+    markup = soup.select_one(".show-more-less-html__markup")
+    if markup is None:
+        return None
+    title_el = soup.select_one(".top-card-layout__title") or soup.find("h1")
+    company_el = (soup.select_one(".topcard__org-name-link")
+                  or soup.select_one("a[data-tracking-control-name='public_jobs_topcard-org-name']"))
+    location_el = soup.select_one(".topcard__flavor--bullet")
+    criteria = []
+    for item in soup.select(".description__job-criteria-list li"):
+        head = item.select_one(".description__job-criteria-subheader")
+        value = item.select_one(".description__job-criteria-text")
+        if head and value:
+            criteria.append(f"{head.get_text(' ', strip=True)}: {value.get_text(' ', strip=True)}")
+    body = markup.get_text("\n", strip=True)
+    description = "\n".join(criteria + [body]) if criteria else body
+    return JobData(
+        title=title_el.get_text(" ", strip=True) if title_el else "LinkedIn Job",
+        company=company_el.get_text(" ", strip=True) if company_el else "Unbekannt",
+        location=location_el.get_text(" ", strip=True) if location_el else "Deutschland",
+        description=description[:3000],
+        email=extract_email(page.text, "linkedin.com"),
+        application_url=detect_portal(page.text),
+        source_url=page.url,
+        is_portal=True,
+    )
+
+
 class LinkedInAdapter:
     NAME = "linkedin"
 
     def extract(self, page: PageFetch) -> JobData:
         soup = BeautifulSoup(page.html or page.text, "html.parser")
+        guest = _guest_markup(soup, page)
+        if guest is not None:
+            return guest
         h1 = soup.find("h1")
         title = h1.get_text(strip=True) if h1 else ""
         company = ""

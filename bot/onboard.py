@@ -18,14 +18,17 @@ import sys
 from pathlib import Path
 
 from bot import client as _client
+from bot import market as _market
 
 TEMPLATE_DIR = _client.ENGINE_ROOT / "templates" / "client"
 SLUG_RE = re.compile(r"^[a-z][a-z0-9-]{1,30}$")
 
-REQUIRED_PROFILE = [
-    "first_name", "last_name", "salutation", "email", "phone", "street",
-    "zip_code", "city", "nationality", "birth_date", "default_salary",
-]
+# Залишено як аліас для scripts/: перелік ринку de_employment.
+REQUIRED_PROFILE = list(_market.get("de_employment").required_profile)
+
+
+def required_profile(market: str) -> list[str]:
+    return list(_market.get(market).required_profile)
 
 
 def init(slug: str, base: Path | None = None) -> Path:
@@ -51,7 +54,7 @@ def check(c: _client.Client) -> tuple[list[str], list[str]]:
     warnings: list[str] = []
     p, cv = c.profile, c.cv
 
-    for key in REQUIRED_PROFILE:
+    for key in required_profile(c.market):
         if not str(p.get(key) or "").strip():
             errors.append(f"profile.yaml: порожнє поле {key}")
     if p.get("birth_date") and not re.match(r"^\d{4}-\d{2}-\d{2}$", str(p["birth_date"])):
@@ -74,7 +77,9 @@ def check(c: _client.Client) -> tuple[list[str], list[str]]:
     default = cv.get("default_variant", variants[0] if variants else None)
     if default not in variants:
         errors.append(f"cv.yaml: default_variant '{default}' нема у variants")
-    if not cv.get("experience"):
+    # source: external: готові PDF, структурованого досвіду й skills у YAML нема
+    external = cv.get("source") == "external"
+    if not cv.get("experience") and not external:
         errors.append("cv.yaml: experience порожній")
     for i, entry in enumerate(cv.get("experience") or [], 1):
         for key in ("dates", "company", "title", "bullets"):
@@ -96,7 +101,7 @@ def check(c: _client.Client) -> tuple[list[str], list[str]]:
                         f"cv.yaml: experience[{i}] буліт не рядок: {b!r} "
                         "(двокрапка без лапок?)")
     skills = cv.get("skills") or {}
-    for v in variants:
+    for v in ([] if external else variants):
         if v not in skills:
             (errors if v == default else warnings).append(
                 f"cv.yaml: skills без варіанта '{v}'"

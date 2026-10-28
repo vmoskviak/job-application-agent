@@ -95,3 +95,55 @@ def test_kind_ignores_leading_emoji_and_bold():
     assert kind("⛔ **skipped 16.10** — 12–15 Std.") == "closed"
     assert kind("🔄 Файли готові — подати вручну") == "manual"
     assert kind("🔄 **форма заповнена 16.10**") == "manual"
+
+
+# ── report_mode: candidate ───────────────────────────────────────────────────
+
+def test_should_send_by_mode_and_run(tmp_path):
+    manual = [r for r in _rows(tmp_path) if r.kind == "manual"]
+    # operator: як раніше, лише після вечірнього рану
+    assert rep.should_send("operator", "evening", [], [], [])
+    assert not rep.should_send("operator", "morning", [], [], manual)
+    assert rep.should_send("operator", None, [], [], [])
+    # candidate: після ранкового і лише коли є що робити
+    assert not rep.should_send("candidate", "evening", [{"message": "x"}], ["<p>x</p>"], manual)
+    assert not rep.should_send("candidate", "morning", [], [], [])
+    assert rep.should_send("candidate", "morning", [], [], manual)
+    assert rep.should_send("candidate", "morning", [{"message": "x"}], [], [])
+    assert rep.should_send("candidate", "morning", [], ["<p>Indeed</p>"], [])
+
+
+def test_todo_mail_has_no_statistics(tmp_path):
+    s = rep.summarize(_rows(tmp_path), "2026-10-09")
+    page = rep.build_todo_html("Erika Muster", "2026-10-09", s, [{"message": "Session XING abgelaufen"}],
+                               ["<p>Indeed-Lead</p>"])
+    assert "Manuell bewerben (3)" in page and "https://jobs.example.com/apply/1" in page
+    assert "Session XING abgelaufen" in page and "<p>Indeed-Lead</p>" in page
+    for stat in ("heute beworben", "insgesamt", "Absagen"):
+        assert stat not in page, stat
+    assert rep.todo_subject("Erika", "2026-10-09", s, []) == "[Erika: Zu tun] 09.10.2026: 3 manuell"
+
+
+def test_todo_files_are_sent_once(tmp_path):
+    (tmp_path / "operator_todo_2026-10-08_evening.html").write_text("<p>a</p>")
+    (tmp_path / "operator_todo_2026-10-09.html").write_text("<p>b</p>")
+    files = rep.unsent_todo(tmp_path)
+    assert [p.name for p in files] == ["operator_todo_2026-10-08_evening.html", "operator_todo_2026-10-09.html"]
+    rep.mark_todo_sent(files)
+    assert rep.unsent_todo(tmp_path) == []
+
+
+# ── report_mode: none (етап 2b) ──────────────────────────────────────────────
+
+def test_should_send_none_only_with_alerts():
+    manual = [object()]
+    assert not rep.should_send("none", "evening", [], [], manual)
+    assert not rep.should_send("none", "morning", [], ["<p>x</p>"], [])
+    assert not rep.should_send("none", None, [], [], [])
+    assert rep.should_send("none", "evening", [{"message": "x"}], [], [])
+    assert rep.should_send("none", "morning", [{"message": "x"}], [], [])
+
+
+def test_alerts_subject():
+    assert rep.alerts_subject("Jordan", "2026-10-26", [{}, {}]) == "[Jordan: Hinweis] 26.10.2026: 2 Hinweise"
+    assert rep.alerts_subject("Jordan", "2026-10-26", [{}]) == "[Jordan: Hinweis] 26.10.2026: 1 Hinweis"

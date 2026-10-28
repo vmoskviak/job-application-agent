@@ -1,13 +1,14 @@
 """Batch intake + keyword scoring + digest builder for --discover workflow."""
 
 from __future__ import annotations
+import os
 import re
 import json
 import sys
 from urllib.parse import urlsplit, parse_qs, urljoin
 
 import httpx
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from datetime import date
 from typing import Optional
@@ -16,6 +17,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 from bot.generators.keywords import CATEGORIES, SALARY_BY_CATEGORY, VARIANT_BY_CATEGORY
 from bot.generators.intake import intake_with_meta, JobData
 from bot.scrapers.models import IntakeResult
+from bot.market import description_limit
 
 
 _URL_PATTERNS = [
@@ -45,6 +47,8 @@ class IntakeStats:
     failed: int = 0
     httpx_ok: int = 0
     playwright: int = 0
+    # URL зі збоєм мережі/фетча: їх не позначаємо «бачені», щоб спробувати знову
+    failed_urls: list = field(default_factory=list)
 
     def record(self, result: IntakeResult) -> None:
         if result.liveness == "live":
@@ -257,6 +261,17 @@ def score_job(title: str, description: str) -> tuple[int, str]:
     return normalised, best_cat
 
 
+def score_fields(title: str, description: str) -> dict:
+    """Поля скорингу запису дайджесту: score, category і підказки треку."""
+    score, cat = score_job(title, description)
+    return {
+        "score": score,
+        "category": cat,
+        "salary_hint": SALARY_BY_CATEGORY.get(cat, "55000"),
+        "variant_hint": VARIANT_BY_CATEGORY.get(cat, "buero"),
+    }
+
+
 def build_digest(scored_results: list[dict]) -> list[dict]:
     """Sort intake+score results by score descending."""
     return sorted(scored_results, key=lambda r: r["score"], reverse=True)
@@ -268,11 +283,14 @@ def process_urls(
     use_playwright: bool = True,
 ) -> tuple[list[dict], IntakeStats]:
     """Run intake on each URL, score live jobs, return sorted digest and stats."""
+    from bot import client as _client
+    desc_limit = description_limit(_client.active().market)
     results: list[dict] = []
     manual_leads: list[dict] = []
     stats = IntakeStats()
 
     urls, failed_tracking = resolve_urls(urls)
+    stats.failed_urls.extend(failed_tracking)
     for url in failed_tracking:
         manual_leads.append({
             "source_url": url,
@@ -298,6 +316,8 @@ def process_urls(
             print(f"[{i}/{len(urls)}] Збираю: {url[:80]}", file=sys.stderr)
         result = intake_with_meta(url, use_playwright=use_playwright)
         stats.record(result)
+        if result.liveness == "failed":
+            stats.failed_urls.append(url)
 
         if result.liveness != "live" or result.job is None:
             # blocked (CAPTCHA/login-wall/cookie-wall, напр. Indeed) та unknown —
@@ -320,19 +340,15 @@ def process_urls(
             continue
 
         job: JobData = result.job
-        score, cat = score_job(job.title, job.description)
         results.append({
-            "score": score,
-            "category": cat,
-            "salary_hint": SALARY_BY_CATEGORY.get(cat, "55000"),
-            "variant_hint": VARIANT_BY_CATEGORY.get(cat, "buero"),
+            **score_fields(job.title, job.description),
             "title": job.title,
             "company": job.company,
             "location": job.location,
             "email": job.email,
             "is_portal": job.is_portal,
             "source_url": job.source_url,
-            "description": job.description[:500],
+            "description": job.description[:desc_limit],
             "liveness": result.liveness,
             "intake_method": result.intake_method,
         })
@@ -355,8 +371,47 @@ def process_urls(
     return build_digest(results), stats, manual_leads
 
 
-def main(urls_file: Path, use_playwright: bool = True) -> None:
-    """CLI entry: read urls.txt, run intake+score, write digest JSON."""
+# --- Стан «вже бачені» (var/state/discover_seen.json) ---------------------------
+# Алерт-листи читаються за два дні (newer_than:2d), тож без пам'яті кожен лінк
+# ішов би через скрапінг, фільтр і cover note двічі, а evening у трекер не пише.
+# Ключ = хост + шлях без query/fragment: трекінгові параметри міняються від
+# листа до листа, сам проєкт той самий.
+
+def seen_key(url: str) -> str:
+    parts = urlsplit(url.strip())
+    return f"{parts.netloc.lower()}{parts.path.rstrip('/')}"
+
+
+def load_seen(path: Path) -> set[str]:
+    try:
+        return set(json.loads(path.read_text(encoding="utf-8")))
+    except (OSError, ValueError):
+        return set()
+
+
+def commit_seen(path: Path, keys: set[str]) -> None:
+    """Атомарно дописує ключі до стану (тимчасовий файл + os.replace)."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(json.dumps(sorted(load_seen(path) | set(keys)), ensure_ascii=False),
+                   encoding="utf-8")
+    os.replace(tmp, path)
+
+
+def split_seen(urls: list[str], seen: set[str]) -> tuple[list[str], list[str]]:
+    fresh, skipped = [], []
+    for u in urls:
+        (skipped if seen_key(u) in seen else fresh).append(u)
+    return fresh, skipped
+
+
+def main(urls_file: Path, use_playwright: bool = True,
+         seen_state: Optional[Path] = None) -> None:
+    """CLI entry: read urls.txt, run intake+score, write digest JSON.
+
+    seen_state: шлях до стану «вже бачені»; None = без пам'яті (поведінка
+    ринку найму, де дедуп іде проти трекера).
+    """
     from bot.scrapers.browser import shutdown_browser
 
     try:
@@ -369,15 +424,30 @@ def main(urls_file: Path, use_playwright: bool = True) -> None:
             print("[discover] urls.txt є порожнім", file=sys.stderr)
             return
 
-        print(f"[discover] Обробляю {len(urls)} URL...", file=sys.stderr)
-        digest, stats, manual_leads = process_urls(urls, use_playwright=use_playwright)
+        skipped: list[str] = []
+        if seen_state is not None:
+            urls, skipped = split_seen(urls, load_seen(seen_state))
+            if skipped:
+                print(f"[discover] вже бачені: {len(skipped)} URL пропущено "
+                      f"(стан {seen_state.name})", file=sys.stderr)
 
         today = date.today().strftime("%Y-%m-%d")
         out_path = urls_file.parent / f"discover_digest_{today}.json"
+        if not urls:
+            out_path.write_text("[]", encoding="utf-8")
+            print(f"[discover] нових URL немає, {out_path.name} порожній", file=sys.stderr)
+            return
+
+        print(f"[discover] Обробляю {len(urls)} URL...", file=sys.stderr)
+        digest, stats, manual_leads = process_urls(urls, use_playwright=use_playwright)
+
         out_path.write_text(
             json.dumps(digest, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
+        if seen_state is not None:
+            failed = set(stats.failed_urls)
+            commit_seen(seen_state, {seen_key(u) for u in urls if u not in failed})
 
         if manual_leads:
             manual_path = urls_file.parent / f"discover_manual_{today}.json"
@@ -395,6 +465,8 @@ def main(urls_file: Path, use_playwright: bool = True) -> None:
                 f"список звіту): {len(manual_leads)} -> discover_manual_{today}.json"
             )
         print(f"  {stats.summary_line(len(urls))}")
+        if skipped:
+            print(f"  Вже бачені раніше (пропущено без фетча): {len(skipped)}")
         print(f"{'='*60}")
         for entry in digest[:10]:
             flag = "email" if entry["email"] else "portal"
@@ -409,3 +481,25 @@ def main(urls_file: Path, use_playwright: bool = True) -> None:
         )
     finally:
         shutdown_browser()
+
+
+if __name__ == "__main__":
+    # Пряма точка входу без new_app.py: той тягне bot.apply.candidate,
+    # якого контрактний клієнт не має.
+    import argparse
+
+    _ap = argparse.ArgumentParser(description="discover: urls.txt -> discover_digest_<дата>.json")
+    _ap.add_argument("urls_file", type=Path)
+    _ap.add_argument("--no-playwright", action="store_true",
+                     help="без Playwright-фолбеку для сторінок, що не віддались httpx")
+    _ap.add_argument("--skip-seen", action="store_true",
+                     help="пропускати лінки з попередніх запусків "
+                          "(стан var/state/discover_seen.json клієнта)")
+    _ap.add_argument("--seen-state", type=Path, metavar="PATH",
+                     help="свій шлях до стану «вже бачені» (вмикає --skip-seen)")
+    _args = _ap.parse_args()
+    _state = _args.seen_state
+    if _state is None and _args.skip_seen:
+        from bot import client as _client
+        _state = _client.active().var / "state" / "discover_seen.json"
+    main(_args.urls_file, use_playwright=not _args.no_playwright, seen_state=_state)

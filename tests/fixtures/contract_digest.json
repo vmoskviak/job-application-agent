@@ -1,0 +1,101 @@
+[
+  {
+    "title": "Senior Android Engineer (Kotlin)",
+    "company": "Contract Co",
+    "location": "Remote",
+    "description": "B2B contract, fully remote within Europe (CET). Rate €90/hour. Kotlin, Jetpack Compose.",
+    "score": 30,
+    "category": "android",
+    "source_url": "https://contract.example/jobs/1"
+  },
+  {
+    "title": "Android Developer",
+    "company": "Employ Co",
+    "location": "Remote",
+    "description": "Permanent position with benefits package. Remote across Europe. Kotlin and Compose.",
+    "score": 60,
+    "category": "android",
+    "source_url": "https://employ.example/jobs/2"
+  },
+  {
+    "title": "Android Engineer",
+    "company": "Office Co",
+    "location": "Lisbon, Portugal",
+    "description": "Freelance engagement, on-site only at our office. Kotlin, Compose.",
+    "score": 60,
+    "category": "android",
+    "source_url": "https://office.example/jobs/3"
+  },
+  {
+    "title": "Android Contractor",
+    "company": "USA Co",
+    "location": "Remote",
+    "description": "Freelance contract, remote, must reside in the US. Kotlin.",
+    "score": 60,
+    "category": "android",
+    "source_url": "https://usa.example/jobs/4"
+  },
+  {
+    "title": "Android Lead Engineer",
+    "company": "Hybrid Co",
+    "location": "Lisbon, Portugal",
+    "description": "Contract role, hybrid setup with 2 days per week in office. Kotlin Multiplatform.",
+    "score": 60,
+    "category": "android",
+    "source_url": "https://hybrid.example/jobs/5"
+  },
+  {
+    "title": "Android engineer for our app",
+    "company": "Hacker Co",
+    "location": "",
+    "description": "Small team building a reading app with Kotlin and Compose. Ping us if interested.",
+    "score": 90,
+    "category": "android",
+    "source_url": "https://news.example/item?id=6"
+  },
+  {
+    "title": "Android Engineer",
+    "company": "NegAuth Co",
+    "location": "Remote",
+    "description": "Contract, remote worldwide. No US work authorization required. Kotlin, Compose.",
+    "score": 60,
+    "category": "android",
+    "source_url": "https://negauth.example/jobs/7"
+  },
+  {
+    "title": "Android Engineer",
+    "company": "Auth Co",
+    "location": "Remote",
+    "description": "Contract, remote worldwide. Must be authorized to work in the US. Kotlin.",
+    "score": 60,
+    "category": "android",
+    "source_url": "https://auth.example/jobs/8"
+  },
+  {
+    "title": "Android Engineer",
+    "company": "Equity Co",
+    "location": "Remote",
+    "description": "Full-time role, 401k, stock options and equity package. Remote worldwide. Kotlin.",
+    "score": 60,
+    "category": "android",
+    "source_url": "https://equity.example/jobs/9"
+  },
+  {
+    "title": "Android Engineer",
+    "company": "Perm Co",
+    "location": "Remote",
+    "description": "Permanent contract, remote Europe. Kotlin and Compose.",
+    "score": 60,
+    "category": "android",
+    "source_url": "https://perm.example/jobs/10"
+  },
+  {
+    "title": "Android Engineer",
+    "company": "Bay Co",
+    "location": "San Francisco, CA",
+    "description": "Kotlin and Compose, great team, competitive pay.",
+    "score": 60,
+    "category": "android",
+    "source_url": "https://bay.example/jobs/11"
+  }
+]

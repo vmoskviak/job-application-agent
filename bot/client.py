@@ -33,6 +33,9 @@ ENV_CLIENTS_DIR = "JOBSEARCH_CLIENTS_DIR"
 STATUSES = ("active", "paused", "placed")
 
 
+
+REPORT_MODES = ("operator", "candidate", "none")
+
 class ClientError(RuntimeError):
     pass
 
@@ -120,6 +123,34 @@ class Client:
         return self.profile.get("status", "active")
 
     @property
+    def market(self) -> str:
+        return self.profile.get("market", "de_employment")
+
+    @property
+    def report_lang(self) -> str:
+        return self.profile.get("report_lang", "de")
+
+    @property
+    def report_mode(self) -> str:
+        """Хто що отримує поштою (profile.yaml → report_mode).
+
+        operator (дефолт): кандидатці короткий лист про подане, оператору щоденний
+        Tagesbericht. candidate: кандидатці повний звіт, кандидатці й оператору
+        лист «Wichtig» лише з тим, що треба зробити, оператору після ранкового
+        рану лише «Zu tun» (ручні подачі, збої), без статистики. none (контрактний
+        ринок, етап 2b): ні Tagesbericht, ні дайджесту; оператору лише лист
+        «Hinweis», коли є збої рушія.
+        """
+        mode = str(self.profile.get("report_mode") or "operator").strip()
+        if mode not in REPORT_MODES:
+            raise ClientError(
+                f"клієнт {self.slug}: report_mode '{mode}' не з {REPORT_MODES}")
+        if mode == "candidate" and not self.report_email:
+            raise ClientError(
+                f"клієнт {self.slug}: report_mode candidate без report_email")
+        return mode
+
+    @property
     def full_name(self) -> str:
         return f"{self.profile['first_name']} {self.profile['last_name']}"
 
@@ -193,6 +224,26 @@ class Client:
     @property
     def playwright_profile(self) -> str:
         return self.accounts.get("playwright_profile", self.slug)
+
+    @property
+    def telegram(self) -> dict:
+        """accounts.yaml → telegram: ім'я змінної оточення з токеном бота
+        (сам токен лише в оточенні сервера) і chat_id оператора. chat_id
+        порожній або 0 = бот нікого не слухає, лише називає id на /start.
+
+        mode: cards (дефолт) — картки з кнопками й власний бот-сервіс клієнта;
+        notify — лише текстові сповіщення оператору через спільний бот, без
+        правок трекера й без сервісу (два long polling на один токен не можна).
+        lang — мова сповіщень оператору (uk|en), дефолт report_lang клієнта."""
+        cfg = self.accounts.get("telegram") or {}
+        token_env = str(cfg.get("token_env") or f"JOBSEARCH_TELEGRAM_TOKEN_{self.slug.upper()}")
+        raw = cfg.get("chat_id")
+        chat_id = int(raw) if raw not in (None, "", 0, "0") else None
+        mode = str(cfg.get("mode") or "cards")
+        if mode not in ("cards", "notify"):
+            raise ValueError(f"accounts.yaml → telegram.mode: {mode!r}, очікується cards або notify")
+        return {"token_env": token_env, "chat_id": chat_id, "mode": mode,
+                "lang": str(cfg.get("lang") or self.report_lang)}
 
 
 def load(slug: str, base: Path | None = None) -> Client:

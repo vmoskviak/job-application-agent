@@ -1,5 +1,7 @@
 # jobsearch-autopilot
 
+[![tests](https://github.com/vmoskviak/job-application-agent/actions/workflows/tests.yml/badge.svg)](https://github.com/vmoskviak/job-application-agent/actions/workflows/tests.yml)
+
 An autonomous job-application agent for the German job market. Every evening it
 finds new openings for a candidate, drops the ones that don't fit, and writes a
 tailored CV and cover letter (Anschreiben) for each. Every morning it submits
@@ -11,22 +13,36 @@ folder of YAML and Markdown in a separate private data repository; this
 repository holds only code, prompts, tests and one fictional example candidate,
 Erika Mustermann (`examples/clients/erika`).
 
+Want to run it for yourself? Start with **[docs/quickstart.md](docs/quickstart.md)**:
+what you need, the seven config files, where the keywords go, how to connect
+Gmail and Claude, rehearse, and switch on the nightly schedule.
+
 ## Production context
 
 - In daily use since May 2026, first for one candidate and since October 2026
-  as a multi-tenant engine (three candidate profiles, paused or active
-  independently). The busiest tracker has about 260 applications.
+  as a multi-tenant engine (three candidate profiles on two markets: German
+  employment and B2B contracting). The busiest tracker has about 260
+  applications.
 - Runs unattended from cron on a self-hosted Proxmox LXC container (Debian 13,
   4 vCPU, 8 GB RAM): 20:30 discovery, 03:00 applications.
 - The agent is Claude Code in headless mode (`claude -p`), one run per
   candidate, with the prompt rendered from a Jinja template and that
   candidate's config.
-- Python, about 15.7k lines including 4.7k lines of tests; 439 pytest tests
-  (438 pass, 1 skips without the optional `anthropic` SDK), all offline.
+- Python, about 20k lines plus 15k lines of tests; 1300 pytest tests, all
+  offline (browser tests are opt-in). CI runs the suite and the privacy check
+  on every push.
 - Playwright apply modules for StepStone, XING, Interamt (German public
-  sector) and Oracle CX Recruiting, plus shared form-filling helpers. The
-  production deployment also runs two employer-specific career-site modules;
-  they are left out of this public copy because they name the employers.
+  sector), Oracle CX Recruiting, LinkedIn Easy Apply, freelancermap and GULP,
+  plus a generic driver for the hosted ATS forms (Ashby, Greenhouse, Lever,
+  Workable) that classifies fields, answers from the profile and hands off to
+  a human over VNC when a form needs them. The production deployment also runs
+  two employer-specific career-site modules; they are left out of this public
+  copy because they name the employers.
+- Besides the two nightly runs, the contract market runs hourly systemd
+  services: an inbox watcher that classifies employer and platform mail, a
+  dispatcher that sends queued applications under a daily limit, a browser
+  worker for forms, and a Telegram bot with buttons for the operator. Clients
+  on the employment market reuse the watcher in a notify-only mode.
 
 ## How it works
 
@@ -122,9 +138,9 @@ tests/          pytest suite, synthetic fixtures only
 
 The engine targets the German market, so the generated documents, portal
 answers and most string matching are in German. The agent prompts, code
-comments, operator reports and the internal docs (`docs/*.md`,
-`docs/README.uk.md`, `CLAUDE.md`) are in Ukrainian, the working language of the
-people who run it. This README is the only English document.
+comments and the internal docs (`docs/*.md`, `docs/README.uk.md`,
+`CLAUDE.md`) are in Ukrainian, the working language of the people who run it.
+This README and `docs/quickstart.md` are the English documents.
 
 ## Known limits
 
@@ -134,8 +150,10 @@ people who run it. This README is the only English document.
   object.
 - Portal modules break when a portal changes its markup. Each module fails
   closed, but someone has to update the selectors.
-- LinkedIn Easy Apply and most corporate ATS are not automated; they end up on
-  the manual list with a direct link.
+- Corporate ATS outside the hosted ones (Ashby, Greenhouse, Lever, Workable)
+  are not automated on the employment market yet; they end up on the manual
+  list with a direct link. The contract market hands such forms to a human over
+  VNC with the fields already filled.
 - Automated submission may conflict with a portal's terms of use. That risk
   sits with the account owner, and the candidate's explicit consent is required.
 - The direct-API tailoring path (`bot/generators/tailor.py`) needs the optional

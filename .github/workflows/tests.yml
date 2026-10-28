@@ -1,0 +1,20 @@
+name: tests
+
+on: [push, pull_request]
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      # weasyprint (рендер CV у PDF) імпортується тестами й потребує pango
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libpango-1.0-0 libpangoft2-1.0-0 libharfbuzz0b
+      - run: pip install -r requirements.txt
+      # Браузерні тести (маркер browser) самі пропускаються без JOBSEARCH_BROWSER_TESTS=1
+      - run: python -m pytest -q
+      # Без папки клієнтів лишається структурна перевірка: чужі email і телефони
+      - run: python scripts/check_no_private_data.py --strict

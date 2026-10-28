@@ -14,4 +14,4 @@ def test_get_adapter_linkedin():
 
 
 def test_get_adapter_generic():
-    assert get_adapter("https://www.muster-partner.example/jobs.php?refnr=1").NAME == "generic"
+    assert get_adapter("https://www.musterbau.example/jobs.php?refnr=1").NAME == "generic"

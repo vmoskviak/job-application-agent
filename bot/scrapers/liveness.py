@@ -12,7 +12,10 @@ CLOSED_PATTERNS = [
     r"nicht mehr verfugbar",
     r"stelle wurde geschlossen",
     r"no longer accepting applications",
-    r"(?:stellenausschreibung|stellenanzeige) ist abgelaufen",
+    # «Diese Stellenanzeige ist auf Indeed abgelaufen» (банер над назвою)
+    r"(?:stellenausschreibung|stellenanzeige) ist (?:auf [\w.-]+ )?abgelaufen",
+    # XING віддає 200 і «Ähnliche Jobs» під цим рядком
+    r"dieses stellenangebot existiert nicht",
     r"keine bewerbungen mehr an(?:genommen|nimmt)",
     r"position has been filled",
     r"stellenangebot.*geschlossen",
@@ -52,7 +55,7 @@ def check_liveness(text: str, url: str) -> Tuple[LivenessStatus, str]:
         if re.search(pat, lower):
             return "closed", f"matched: {pat}"
 
-    # Avoid bare "404" — job pages may list ref numbers (392…404…405 on muster-partner.example)
+    # Avoid bare "404": a job board may list its ref numbers (392…404…405) on the page
     if re.search(
         r"seite nicht gefunden|page not found|error\s*404|404\s*error|http\s*404|status\s*404",
         lower,

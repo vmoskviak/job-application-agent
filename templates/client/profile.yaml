@@ -8,6 +8,9 @@ email: ''               # адреса в CV й Anschreiben
 # Особиста скринька кандидата: туди після кожного рану з поданими заявками йде
 # короткий звіт (куди, на яку роль, два-три речення). Порожньо = не слати.
 report_email: ''
+# report_mode: operator (дефолт: оператору Tagesbericht) | candidate (кандидатці звіт,
+# оператору лише «Zu tun») | none (контрактний ринок, етап 2b: без звітів, оператору
+# лише «Hinweis» при збоях рушія).
 phone: ''               # +49 ...
 phone_prefix: '+49'
 street: ''
@@ -21,10 +24,25 @@ default_salary: ''      # Brutto/Jahr, лише цифри: '48000'
 # Рівні мов для pre-screening порталів (XING питає перед Easy Apply):
 # префікси опцій A1-A2 · B1-B2 · C1 · C2
 language_levels: {Deutsch: C1, Englisch: B1-B2}
+# Посилання для полів ATS-форм (LinkedIn, GitHub, сайт). Немає значення: поле лишається порожнім.
+links: {linkedin: '', github: '', website: ''}   # https://www.linkedin.com/in/<handle>
+# Ставка для питань про compensation/salary у формах (контрактний ринок).
+rate: {hourly_target: '', currency_default: EUR}
 # Відповіді на типові додаткові питання портальних форм. pattern — regex по
 # тексту питання; answer — текст у поле, choice: yes|no — radio Ja/Nein.
 # Питання, яких тут нема, бот не вгадує: заявка йде оператору в manual.
+# Один запис може мати і answer (текстове поле), і choice (radio Yes/No);
+# ATS-форми (Ashby, Greenhouse) читають ті самі записи по label + групі питання.
+# Дозвіл на роботу й спонсорство: кожне правило з choice. Yes/No кнопки й radio
+# читають лише правила з choice (запис з одним answer пропускають), комбобокс
+# бере choice раніше за answer; без choice те саме питання в різних полях
+# дістане різні відповіді або жодної. Шаблон обмежений словами ЄС: до питання
+# без країни рушій дописує « [job country: EU]» лише для вакансії в
+# ЄС/ЄЕЗ/Швейцарії, тож для США правило не спрацює й поле піде оператору.
+# Відстань .{0,200}: підпис і група часто те саме довге питання двічі.
 form_answers: []
+# - {pattern: 'authori[sz]ed.{0,200}(germany|\beu\b|europe)', answer: 'Yes', choice: 'yes'}
+# - {pattern: '(sponsor|visa).{0,200}(germany|\beu\b|europe)', answer: 'No', choice: 'no'}
 # - {pattern: 'vollzeit oder teilzeit|stunden pro woche', answer: 'Vollzeit'}
 # - {pattern: 'weitere stellen|talentpool|bewerberpool', choice: 'no'}
 # додаткові рядки в шапці CV (LinkedIn, Staatsangehörigkeit, Arbeitserlaubnis)

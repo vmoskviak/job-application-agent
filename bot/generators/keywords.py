@@ -7,7 +7,7 @@
 from bot import client as _client
 
 _tracks: dict[str, dict] = _client.active().tracks.get("tracks", {})
-_default_salary = str(_client.active().profile["default_salary"])
+_default_salary = str(_client.active().profile.get("default_salary", "") or "")
 
 CATEGORIES: dict[str, list[str]] = {
     name: list(t.get("keywords", [])) for name, t in _tracks.items()

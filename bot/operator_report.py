@@ -216,3 +216,88 @@ def build_text(day: str, s: dict, alerts: list[dict]) -> str:
         lines.append("\nManuell offen:")
         lines += [f"  {r.day}  {r.company}: {r.title}  {r.url}".rstrip() for r in s["manual_open"]]
     return "\n".join(lines)
+
+
+# ── report_mode: candidate — оператору лише «Zu tun» ─────────────────────────
+
+def unsent_todo(var_run: Path) -> list[Path]:
+    """Нотатки агента «Zu tun» (вечірні й ранкові), ще не надіслані оператору."""
+    return sorted(var_run.glob("operator_todo_*.html"))
+
+
+def mark_todo_sent(paths: list[Path]) -> None:
+    for p in paths:
+        p.rename(p.with_name(p.name + ".sent"))
+
+
+def should_send(report_mode: str, run: str | None, alerts: list[dict],
+                todo: list[str], manual_open: list[Row]) -> bool:
+    """Чи слати лист оператору після цього рану.
+
+    operator: зведений Tagesbericht після вечірнього рану (run None = ручний виклик).
+    candidate: «Zu tun» після ранкового рану (тоді ручні подачі вже відомі) і
+    лише якщо є що робити; порожній день = жодного листа.
+    none: лише збої рушія (alerts), після будь-якого рану; без них жодного листа."""
+    if report_mode == "none":
+        return bool(alerts)
+    if report_mode == "candidate":
+        return run in (None, "morning") and bool(alerts or todo or manual_open)
+    return run in (None, "evening")
+
+
+def alerts_subject(first_name: str, day: str, alerts: list[dict]) -> str:
+    """Тема листа для report_mode none: лише кількість збоїв."""
+    n = len(alerts)
+    return f"[{first_name}: Hinweis] {_day_de(day)}: {n} Hinweis{'e' if n != 1 else ''}"
+
+
+def todo_subject(first_name: str, day: str, s: dict, alerts: list[dict]) -> str:
+    parts = [f"{len(s['manual_open'])} manuell"]
+    if alerts:
+        parts.append(f"{len(alerts)} Hinweis{'e' if len(alerts) != 1 else ''}")
+    return f"[{first_name}: Zu tun] {_day_de(day)}: " + ", ".join(parts)
+
+
+def build_todo_html(full_name: str, day: str, s: dict, alerts: list[dict], todo: list[str]) -> str:
+    """Лист оператору без статистики: збої, нотатки агента, ручні подачі."""
+    e = html.escape
+    out = [
+        '<div style="max-width:680px;margin:0 auto;font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;color:#1f2328;">',
+        '<div style="background:#24292f;color:#fff;border-radius:8px 8px 0 0;padding:16px 20px;">'
+        f'<div style="font-size:18px;font-weight:700;">Zu tun · {_day_de(day)}</div>'
+        f'<div style="font-size:13px;opacity:.85;margin-top:2px;">Automatische Jobsuche · {e(full_name)}</div></div>',
+    ]
+    if alerts:
+        items = "".join(
+            f'<div style="padding:4px 0;font-size:13px;"><b>{e(a.get("message", ""))}</b>'
+            f'<span style="color:#59636e;"> · {e(a.get("run", ""))}, {e(a.get("at", ""))}</span></div>'
+            for a in alerts)
+        out.append('<div style="border:1px solid #d1d9e0;border-top:0;border-left:4px solid #d4a72c;'
+                   f'background:#fff8c5;padding:12px 20px;"><div style="font-weight:700;margin-bottom:4px;">'
+                   f'Hinweise</div>{items}</div>')
+    for part in todo:
+        out.append(f'<div style="border:1px solid #d1d9e0;border-top:0;padding:14px 20px;">{part}</div>')
+    if s["manual_open"]:
+        lines = []
+        for r in s["manual_open"]:
+            link = f' · <a href="{e(r.url)}" style="color:#0969da;">öffnen</a>' if r.url else ""
+            lines.append(f'<div style="padding:4px 0;border-top:1px solid #f0f3f6;font-size:13px;">'
+                         f'<b>{e(r.company)}</b>: {e(r.title)}<span style="color:#59636e;"> · {e(r.day)}</span>{link}</div>')
+        out.append('<div style="border:1px solid #d1d9e0;border-top:0;padding:14px 20px;">'
+                   f'<div style="font-size:14px;font-weight:700;margin-bottom:8px;">Manuell bewerben ({len(s["manual_open"])})</div>'
+                   + "".join(lines) + "</div>")
+    out.append('<div style="border:1px solid #d1d9e0;border-top:0;border-radius:0 0 8px 8px;padding:10px 20px;'
+               'font-size:11px;color:#59636e;">Nur was zu tun ist. Einladungen kommen separat als «Wichtig», '
+               'den vollständigen Bericht bekommt die Kandidatin.</div></div>')
+    return "".join(out)
+
+
+def build_todo_text(day: str, s: dict, alerts: list[dict]) -> str:
+    lines = [f"Zu tun {_day_de(day)}"]
+    if alerts:
+        lines.append("\nHinweise:")
+        lines += [f"  ! {a.get('message', '')}  ({a.get('run', '')}, {a.get('at', '')})" for a in alerts]
+    if s["manual_open"]:
+        lines.append("\nManuell bewerben:")
+        lines += [f"  {r.day}  {r.company}: {r.title}  {r.url}".rstrip() for r in s["manual_open"]]
+    return "\n".join(lines)

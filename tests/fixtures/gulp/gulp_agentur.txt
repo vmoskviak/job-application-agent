@@ -1,0 +1,110 @@
+powered by
+service@agentur.example
++49 89 0000000
+Registrieren
+Anmelden
+Stichwortsuche nach Projekten, z.B. Java, SAP, ...
+Stadt
+Suchen
+Wir suchen im Auftrag unseres Kunden:
+IT - Entwickler u.a. Kotlin, React, DevOps,Domain, Agil, Microservice, Container, Cloud, etc (w/m/d)
+Randstad Agentur
+Teilen
+URL Kopieren
+Seite drucken
+Startdatum
+03.11.2026
+Dauer
+unbefristet
+Einsatzort
+60311 Frankfurt am Main
+Jetzt bewerben
+Job ID C00000001 Veröffentlicht am 20.10.2026 11:30
+Ihr Ansprechpartner
+Herr Max Mustermann
+Randstad Professional
+Musterstraße 1
+12345 Musterstadt
+Deutschland
++49 61 0000000
+
+
+
+Das Projekt dient der Ablösung einer bestehenden Software-Lösung für die Verkehrssteuerung im Fernverkehr. In skaliert zusammenarbeitenden DevOps-Teams werden Software-Produkte als Single-Page-Anwendungen in einer Microservice-Architektur für den Cloud-Betrieb entwickelt und betrieben.
+
+Die Entwicklung erfolgt nach modernen Standards unter Einsatz von Cloud-Technologien, Docker, CI/CD, vollständiger Liefer- und Testautomatisierung sowie integriertem Schwachstellenmanagement. Methodisch wird agil vorgegangen; UX, Endanwender-Fokus, Domain-Driven Design (DDD) und Test-Driven Development (TDD) bilden zentrale Arbeitsgrundlagen. Die DevOps-Teams verantworten neben der Entwicklung auch den operativen Betrieb der Produkte selbst.
+
+Projektbeschreibung
+Aufbau und evolutionäre Weiterentwicklung der zur fachlichen Domäne passenden Microservice-Architektur mit Mitteln des Domain Driven Designs.
+Fördern und Treiben der Umsetzung der technologischen Strategie, des architektonisch-technischen Wissensaustauschs sowie der Innovation und Standardisierung im Projekt.
+Beratung bei der Umsetzung der technischen Architektur in der Softwareentwicklung.
+Implementierung technischer Komponenten in Applikationen auf Basis der genutzten Technologien (Microservice-Architekturen, Spring, AWS, Messaging, Kotlin) inklusive Schnittstellen, Modulen und Datenbanken.
+Umsetzung und Optimierung von CI/CD-Pipelines auf Basis von GitLab CI, Jenkins, Docker und OpenShift (Kubernetes).
+Sicherstellung eines möglichst automatisierten, stabilen Anwendungsbetriebs unter kontinuierlicher Verbesserung von Architektur, Prozessen und Tools.
+Programmierung, Implementierung und Customizing technischer Komponenten unter Einhaltung der Standards und Programmierrichtlinien des Auftraggebers.
+Skills
+Muss-Kriterien (fachlich zwingende Anforderungen)Softwareentwicklung & Anwendungsarchitektur im Backend: Kotlinentwicklung im Rahmen eines Application Design (z. B. Ports & Adapter, IODA, etc.). - Nachweis durch: Erfahrungslevel in Jahren - Senior (> 5 Jahre Erfahrung)Softwareentwicklung & Anwendungsarchitektur: Frontend Programmier- & Architekturkenntnisse, mind. mit React. - Nachweis durch: Erfahrungslevel in Jahren - Senior (> 5 Jahre Erfahrung)Praktische Erfahrung mit agilen Engineering-Praktiken - Nachweis durch: Erfahrungslevel in Jahren - Senior (> 5 Jahre Erfahrung)Erfahrung mit cloudbasierter und containerisierter Infrastruktur in Micro-Service-Architekturen - Nachweis durch: Erfahrungslevel in Jahren - Senior (> 5 Jahre Erfahrung)Methoden- & Technologiekenntnisse mit DevOps - Nachweis durch: Erfahrungslevel in Jahren - Senior (> 5 Jahre Erfahrung)Soll-Kriterien (Bewertungskriterien)Nachgewiesene praktische Erfahrung mit Methoden und Werkzeugen des strategischen und taktischen Domain Driven Designs. - Nachweis durch: Anzahl Referenzen - 2 Referenzen - Gewichtung: 30%Nachgewiesene praktische Erfahrung mit dem Docs-First-Ansatz (z.B. Docs-as-Code, Spec Driven Development, etc.) - Nachweis durch: Anzahl Referenzen - 2 Referenzen - Gewichtung: 30%Praktische Erfahrung mit dem Monitoring mit Prometheus - Nachweis durch: Erfahrungslevel in Jahren - Senior (> 5 Jahre Erfahrung) - Gewichtung: 20%Praktische Erfahrungen mit Spring Boot - Nachweis durch: Erfahrungslevel in Jahren - Senior (> 5 Jahre Erfahrung) - Gewichtung: 20%
+Das bieten wir
+Zahlungsziel-Verkürzung: Attraktive Möglichkeiten zur Verkürzung Ihres persönlichen Zahlungszieles
+Einfaches Gutschriftenverfahren: Keine zeitraubende Rechnungserstellung mehr nötig
+Abrechnungen ohne Umwege: Schnelle, zuverlässige Honorarzahlung
+Digitalisierter Unterschriftenprozess: Projektverträge mittels elektronischer Signatur abschließen
+Über Randstad Professional
+
+Randstad ist einer der weltweit führenden Personaldienstleister mit dem Ziel, so spezialisiert und so fair zu werden wie kein anderes Unternehmen in der Welt der Arbeit. Durch die Unternehmensstrategie "partner for talent" finden, fördern und verbinden wir spezialisierte Talente mit Unternehmen – weltweit, vor Ort und immer mit hoher Geschwindigkeit. Wir schaffen leistungsfähige, vielfältige und agile Teams und unterstützen jeden Einzelnen dabei, eine erfolgreiche Karriere mit gleichen Chancen zu erreichen.
+
+Randstad Professional (vormals GULP) ist eine der vier Spezialisierungen von Randstad und konzentriert sich auf die Vermittlung von Fach- und Führungskräften in den Zukunftsbranchen IT, Engineering, Life Science und Office.
+
+Hinweis: Um die Lesbarkeit des Textes zu verbessern, wird für die Bezeichnung von Personen, Funktionen etc. die männliche Form verwendet. Sie steht jedoch ausnahmslos für alle Geschlechter.
+
+Auf Randstad können Sie vertrauen
+powered by
+Xing
+LinkedIn
+Facebook
+Instagram
+Twitter
+YouTube
+Freelancer
+Projektbörse
+Registrierung für Freelancer
+GULP Membership
+Projektvertrag elektronisch unterzeichnen
+Checkliste: Freelancer werden
+Stundensatz kalkulieren
+Artikel für Freelancer
+Unternehmen
+GULP Direkt
+Verfügbare Freelancer finden
+GULP Talent Solutions
+IT Service Desk
+Compliance Services
+GULP Corporate
+Artikel für Unternehmen
+Bewerber
+Jobbörse
+Berufsbilder
+Bewerbertipps
+Erfahrungsberichte
+Initiativbewerbung
+Meistgesuchte Skills
+Artikel für Bewerber
+Über uns
+Kontakt und Standorte
+Interne Karriere
+Nachhaltigkeit
+Fragen und Antworten
+Verantwortung und Qualität
+Netiquette
+Presse und Aktuelles
+AGB
+Datenschutz
+Impressum
+Meldung von Schwachstellen der Sicherheit
+Gender-Hinweis
+Zurück zum Anfang
+Willkommen. Übernehmen Sie die Kontrolle über Ihre Cookies.
+Für ein bestmögliches User-Erlebnis setzen wir Technologien wie z. B. Cookies ein. Wenn Sie der Verwendung aller beschriebenen Cookies zustimmen, klicken Sie auf "Alle akzeptieren". Möchten Sie Ihre Cookie-Präferenzen anpassen, klicken Sie auf "Cookies anpassen", um festzulegen, welchen Cookies Sie zustimmen. Klicken Sie auf "Alle ablehnen" um nur dem Einsatz zwingend notwendiger Cookies zuzustimmen. Welche Cookies wir verwenden und warum, lesen Sie in unsererDatenschutzhinweisen.
+Anpassen
+Alle ablehnen
+Alle akzeptieren

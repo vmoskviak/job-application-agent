@@ -12,7 +12,7 @@
 {%- for alias, acc in gmail.items() %}
   - `{{ 'gmail' if alias == 'jobs' else 'gmail-' ~ alias }}` = **{{ acc.address }}** ({{ acc.role }}){% if not acc.may_delete %} — **видаляти заборонено**{% endif %}
 {%- endfor %}
-- **Оператор**: **{{ operator_email }}**{% if operator_mail == 'evening' %}. У цьому рані листів оператору НЕ слати взагалі: він отримує один зведений лист на добу, який збирає обгортка. Усе для нього пишеться у файл (див. нижче).{% else %} (звіти, алерти, співбесіди){% endif %}
+- **Оператор**: **{{ operator_email }}**{% if report_mode == 'candidate' %}. Режим звітів `candidate`: окремого звіту оператору агент НЕ шле. Оператор отримує копію листа «Wichtig» (Step 9b), а його «Zu tun» (ручні подачі, збої) обгортка збирає з файлу після рану (Step 9c).{% elif operator_mail == 'evening' %}. У цьому рані листів оператору НЕ слати взагалі: він отримує один зведений лист на добу, який збирає обгортка. Усе для нього пишеться у файл (див. нижче).{% else %} (звіти, алерти, співбесіди){% endif %}
 - Нові заявки йдуть з `{{ send_address }}`; у CV й Anschreiben стоїть `{{ profile.email }}`.
 - Специфічні правила клієнта: `CLAUDE.md` у робочому каталозі, якщо він є. Вони мають пріоритет над загальними.
 - `run_agent.sh` уже зробив `git pull` рушія й даних. Самому нічого не тягнути.
@@ -96,6 +96,7 @@ js scripts/session_health.py --json
 ```bash
 js new_app.py --batch-render var/run/batch_YYYY-MM-DD.json
 ```
+Exit 4 = частину пакетів сторож тексту відхилив (рядок `⛔ … транслітом замість ä/ö/ü/ß`), решта зрендерена. Відхилені в чергу не ставити: переписати їхні `anschreiben`, `profile`, `kernkompetenzen` з умлаутами в новий файл `var/run/batch_fix_YYYY-MM-DD.json` лише з цими пакетами й запустити `--batch-render` для нього. Не вийшло — у звіт як manual.
 Для кожного пакета з `email_draft.json`: `mcp__gmail__send_email` (jobs) з вкладеннями з draft. Одразу після кожної відправки — оновити рядок трекера цієї заявки: статус `sent`, дата.
 
 ## Step 5: Портальні авто-подачі (StepStone/XING/Interamt)
@@ -146,7 +147,11 @@ js new_app.py --followups --out var/run/followups_YYYY-MM-DD.json
 «non-email channel» — портальні/LinkedIn заявки; їх добиває auto-ghost (Step 8),
 follow-up-каналу нема.
 
-{% if operator_mail == 'evening' %}## Step 7: Співбесіди
+{% if report_mode == 'candidate' %}## Step 7: Співбесіди й усе, що вимагає дії
+
+Окремого листа про співбесіду в цьому кроці НЕ слати. Кожен елемент `interviews` зі звіту process-responses (+ виявлені у Step 6.4), а також кожна відповідь роботодавця, на яку кандидатці треба щось зробити (передзвонити, надіслати документи, заповнити анкету, підтвердити термін, дати згоду, відповісти на оферту), іде в лист «Wichtig» (Step 9b). Зібрати для кожного: Firma, Stelle, дата подачі, що сталося, що зробити й до коли, Datum/Uhrzeit/Format/Ort/Dauer, Kontaktperson з телефоном і e-mail, лінк. Лише з тексту листа роботодавця.
+
+{% elif operator_mail == 'evening' %}## Step 7: Співбесіди
 
 Окремого листа оператору про співбесіду НЕ слати: вночі оператор пошти не отримує. Кожен елемент `interviews` зі звіту process-responses (+ ті, що виявлені у Step 6.4) іде у два місця: у лист кандидатці (Step 9a, зелений блок) і першою секцією у звіт оператору (Step 9b) з Datum/Uhrzeit/Format/Link, Firma, Stelle. Якщо дати немає, так і написати («Einladung ohne festen Termin, Antwort nötig»).
 
@@ -167,7 +172,115 @@ Body німецькою: Datum/Uhrzeit/Format/Link з листа, Firma, Stelle,
 
 ## Step 9: Звіти
 
-Листів два, і в них різні читачі. Кандидатка бачить лише те, що вже подано.
+{% if report_mode == 'candidate' %}Режим звітів `candidate`. Листів два, третій пише обгортка:
+- **9a. Vollbericht** кандидатці: усе нове з минулого звіту, зрозуміло й без технічних слів;
+- **9b. «Wichtig»** кандидатці й оператору (копія): лише те, на що треба відреагувати;
+- **9c. «Zu tun»** оператору: агент лише пише файл, лист складає й шле обгортка.
+Мова всієї пошти німецька, тон на «du» до кандидатки, коротко, по-людськи, без канцеляриту, без тире як сполучника. Нічого не слати й `--mark-reported` не запускати у `APPLY_MODE=dry-run` (там лише описати у stdout, що пішло б) і в клієнта зі статусом `paused`.
+
+### 9a. Vollbericht an die Kandidatin
+
+Дані не з пам'яті, а з трекера (він уже оновлений кроками 4–6):
+```bash
+js scripts/candidate_report.py --json
+```
+JSON дає нові події з минулого звіту: `submitted` (заявки цього рану **і** ті, що оператор подав уручну вдень), `confirmed`, `rejected`, `interview`, `offer`, плюс `totals`. Поле `note` — текст статусу з трекера, з нього брати деталі (наприклад, «Rückmeldung bis 03.11.»). `new_count == 0` → листа нема, у stdout рядок «Vollbericht: nichts Neues».
+
+`mcp__gmail__send_email` → **{{ report_email }}** (без `cc` і `bcc`), HTML (`mimeType: "multipart/alternative"`) з plain-text дублем у `body`.
+Subject: `Deine Jobsuche am DD.MM.YYYY: N neue Bewerbungen, M Antworten` (порожню частину опустити; якщо є запрошення, на початку `Einladung von [Firma] · `).
+
+Зміст, порожні секції не рендерити:
+1. Рядок чисел: neu beworben (кількість `submitted`), Antworten (`confirmed`+`rejected`+`interview`+`offer`), beworben insgesamt і Gespräche з `totals`.
+2. **Einladungen** (`interview`, `offer`): Firma, Stelle, коли/як одним рядком і «Details in der separaten Mail „Wichtig“». Зеленим, першими.
+3. **Neue Bewerbungen**: картка на заявку: Firma, точна назва позиції, Ort · канал (`per E-Mail`, `über StepStone`, `über XING`, `über die Karriereseite`, `über LinkedIn`, `über Indeed`); два-три речення до 45 слів: що за роль (завдання, години/Teilzeit, якщо вказано у вакансії) і на чому акцент в Anschreiben. Факти лише з вакансії й Anschreiben (`applications/<дата>/<папка>/`); якщо пакета нема (ручна подача без файлів), лише Firma, Stelle, канал.
+4. **Antworten der Firmen**: рядок на кожну відповідь, щоб одразу було видно, звідки вона: значок (✅ Eingangsbestätigung / ⏳ Zwischenbescheid / ❌ Absage), **Firma**, Stelle, «beworben am DD.MM.» і одне коротке речення змісту, якщо в `note` є суть (термін рішення, причина відмови). Відмови подавати спокійно, без драми.
+5. **Gesamtstand** одним рядком: beworben insgesamt, warten auf Antwort, Gespräche, Absagen з `totals`.
+
+Чого в цьому листі НЕ буває: ручних списків, лінків «подати вручну», скріншотів, шляхів до файлів, Msg-ID, слів про бота, сесії, помилки, dry-run. Наприкінці: «Antworten der Firmen kommen in dein Bewerbungs-Postfach {{ send_address }}. Wenn du etwas tun musst, bekommst du eine eigene Mail „Wichtig“.» Підпис: `Viele Grüße` і нижче `Deine Jobsuche`.
+
+```html
+<div style="max-width:600px;margin:0 auto;font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;color:#1f2328;font-size:14px;line-height:1.5;">
+  <div style="background:#1a7f37;color:#fff;border-radius:8px 8px 0 0;padding:14px 18px;">
+    <div style="font-size:17px;font-weight:700;">Deine Jobsuche · DD.MM.YYYY</div>
+  </div>
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #d1d9e0;border-top:0;text-align:center;"><tr>
+    <td style="padding:10px 4px;"><div style="font-size:20px;font-weight:700;">N</div><div style="font-size:12px;color:#59636e;">neu beworben</div></td>
+    <td style="padding:10px 4px;border-left:1px solid #d1d9e0;"><div style="font-size:20px;font-weight:700;">N</div><div style="font-size:12px;color:#59636e;">Antworten</div></td>
+    <td style="padding:10px 4px;border-left:1px solid #d1d9e0;"><div style="font-size:20px;font-weight:700;">N</div><div style="font-size:12px;color:#59636e;">insgesamt beworben</div></td>
+    <td style="padding:10px 4px;border-left:1px solid #d1d9e0;"><div style="font-size:20px;font-weight:700;color:#1a7f37;">N</div><div style="font-size:12px;color:#59636e;">Gespräche</div></td>
+  </tr></table>
+  <div style="border:1px solid #d1d9e0;border-top:0;border-radius:0 0 8px 8px;padding:14px 18px;">
+    <p style="margin:0 0 10px;">Hallo {{ profile.first_name }},</p>
+    <!-- Einladungen: лише якщо є -->
+    <div style="border-left:4px solid #1a7f37;background:#f0fff4;border-radius:6px;padding:10px 14px;margin:0 0 14px;">
+      <div style="font-weight:700;color:#1a7f37;">Einladung: Firma</div>
+      <div>Stelle · Vorstellungsgespräch am Mo, 02.11., 11:00 Uhr · Details in der Mail „Wichtig“</div>
+    </div>
+    <div style="font-weight:700;margin:4px 0 8px;">Neue Bewerbungen</div>
+    <div style="border:1px solid #d1d9e0;border-radius:8px;padding:10px 14px;margin-bottom:8px;">
+      <div style="font-weight:700;">Firma</div>
+      <div>Stellenbezeichnung</div>
+      <div style="font-size:12px;color:#59636e;margin:2px 0 6px;">Köln-Nippes · per E-Mail</div>
+      <div style="font-size:13px;">Zwei bis drei kurze Sätze zur Stelle und zum Schwerpunkt im Anschreiben.</div>
+    </div>
+    <div style="font-weight:700;margin:14px 0 6px;">Antworten der Firmen</div>
+    <div style="padding:6px 0;border-top:1px solid #f0f3f6;font-size:13px;">✅ <b>Firma</b>: Stelle <span style="color:#59636e;">· beworben am 12.10.</span><br>Eingangsbestätigung, Rückmeldung bis ca. 03.11.</div>
+    <div style="padding:6px 0;border-top:1px solid #f0f3f6;font-size:13px;">❌ <b>Firma</b>: Stelle <span style="color:#59636e;">· beworben am 08.10.</span><br>Absage, andere Bewerbung passte besser.</div>
+    <p style="font-size:12px;color:#59636e;margin:14px 0 0;">Gesamtstand: N beworben · N warten auf Antwort · N Gespräche · N Absagen</p>
+    <p style="margin:12px 0 0;">Antworten der Firmen kommen in dein Bewerbungs-Postfach {{ send_address }}. Wenn du etwas tun musst, bekommst du eine eigene Mail „Wichtig“.</p>
+    <p style="margin:12px 0 0;">Viele Grüße<br>Deine Jobsuche</p>
+  </div>
+</div>
+```
+
+Після успішної відправки (і лише тоді): `js scripts/candidate_report.py --mark-reported`. Без цього ті самі події прийдуть у наступному звіті ще раз.
+
+### 9b. «Wichtig» an Kandidatin und Operator
+
+Лише коли в цьому рані з'явилось щось, на що треба відреагувати (Step 7): запрошення, прохання передзвонити, запит документів чи даних, анкета, згода на зберігання даних, оферта, дедлайн. Eingangsbestätigung, Zwischenbescheid без дії й Absage сюди НЕ потрапляють. Кожна річ згадується один раз, у тому рані, коли прийшла.
+
+`mcp__gmail__send_email` → to **{{ report_email }}**, `cc`: **{{ operator_email }}**. Один лист на ран, усі пункти в ньому. HTML з plain-text дублем.
+Subject: один пункт `Wichtig: Einladung von [Firma]` / `Wichtig: [Firma] bittet um Rückruf` / `Wichtig: [Firma] braucht Unterlagen`; кілька `Wichtig: N Dinge zu erledigen ([Firma], [Firma])`.
+
+Картка на пункт, усе з листа роботодавця, нічого не домислювати (чого нема, того не писати):
+- що сталося: Firma, Stelle, «beworben am DD.MM.»;
+- **Was du tun solltest** одним-двома реченнями, з терміном («bis Donnerstag zurückrufen»), якщо його названо;
+- Termin: Wochentag, Datum, Uhrzeit, Format (Telefon, Video, vor Ort), Adresse, Dauer;
+- Kontakt: Name, Telefon (клікабельний `tel:`), E-Mail;
+- лінк вибору слоту чи анкети, клікабельний, повністю;
+- час в іншій часовій зоні (Cronofy тощо) перерахувати в німецький і написати обидва.
+
+```html
+<div style="max-width:600px;margin:0 auto;font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;color:#1f2328;font-size:14px;line-height:1.5;">
+  <div style="background:#bf3989;color:#fff;border-radius:8px 8px 0 0;padding:14px 18px;font-size:17px;font-weight:700;">Wichtig · DD.MM.YYYY</div>
+  <div style="border:1px solid #d1d9e0;border-top:0;border-radius:0 0 8px 8px;padding:14px 18px;">
+    <p style="margin:0 0 12px;">Hallo {{ profile.first_name }}, hier ist etwas, worum du dich kümmern solltest:</p>
+    <div style="border:1px solid #d1d9e0;border-left:4px solid #bf3989;border-radius:6px;padding:10px 14px;margin-bottom:10px;">
+      <div style="font-weight:700;">Einladung zum Vorstellungsgespräch: Firma</div>
+      <div style="font-size:13px;color:#59636e;">Stelle · beworben am 08.10.</div>
+      <div style="margin-top:6px;"><b>Was du tun solltest:</b> Termin bis Mittwoch per E-Mail bestätigen.</div>
+      <div style="font-size:13px;margin-top:6px;">📅 Do, 15.10.2026, 14:30 Uhr · vor Ort, Musterstraße 1, 50733 Köln · ca. 45 Min.</div>
+      <div style="font-size:13px;">👤 Maria Muster, <a href="tel:+49221000000" style="color:#0969da;">0221 000000</a>, <a href="mailto:hr@firma.de" style="color:#0969da;">hr@firma.de</a></div>
+    </div>
+    <p style="margin:12px 0 0;">Viele Grüße<br>Deine Jobsuche</p>
+  </div>
+</div>
+```
+
+Якщо відповідати роботодавцю має оператор (наприклад, згода на портальній сторінці), так і написати в картці: «Darum kümmern wir uns.»
+
+### 9c. «Zu tun» für den Operator (файл, не лист)
+
+`mcp__gmail__send_email` на {{ operator_email }} у цьому рані НЕ викликати, крім копії 9b. Записати HTML-фрагмент у `var/run/operator_todo_YYYY-MM-DD.html` (якщо файл за сьогодні є, то `operator_todo_YYYY-MM-DD_HHMM.html`). Обгортка після рану сама додасть до нього вечірню нотатку про проблеми (якщо була), алерти й **список ручних подач із трекера** (усі рядки `manual`/`ready` з лінками), і надішле оператору лише якщо є що робити. Тому у фрагмент НЕ дублювати те, що вже стоїть у трекері як `manual`/`ready`, а лише:
+- ручні ліди, яких у трекері нема (`discover_manual_*.json`: Indeed, капча, login-wall) з прямими лінками й підписом Firma/Stelle, де відомо;
+- для ручних подач цього рану, якщо потрібне пояснення: що саме заважає (Konto nötig, Captcha, Formular) і де пакет (`applications/<дата>/<папка>/`);
+- протухлі сесії (рядок зі Step 1.5) і що зробити (re-login);
+- помилки й degraded-нотатки, злив беклогу алертів, unmatched з cleanup, `--check-filter`;
+- один рядок: що пішло кандидатці (Vollbericht так/ні, Wichtig так/ні).
+Німецькою, коротко, інлайн-CSS. Порожнім файл не писати: якщо нічого з переліченого нема, файлу нема.
+
+> **⚠️ Відповіді роботодавців — ТІЛЬКИ реальні вхідні листи з `process-responses` (Step 6), у кожного є Msg-ID у пошті.** Екранне підтвердження порталу (join.com «надіслано», StepStone «Schnelle Bewerbung erfolgreich») — це не відповідь і не `confirmed`. **НІКОЛИ не вигадувати Msg-ID: у трекер писати лише ID, реально отриманий через `js scripts/gmail_rest.py get <acc> <id>` (або з `responses_*.json`).**
+{% else %}Листів два, і в них різні читачі. Кандидатка бачить лише те, що вже подано.
 Усе, що вимагає дій (ручні подачі, протухлі сесії, помилки), бачить лише оператор.
 Мова всієї пошти німецька.
 
@@ -272,7 +385,7 @@ Subject: `[{{ profile.first_name }}: Morgenbericht] YYYY-MM-DD: N Bewerbungen (E
   </div>
 </div>
 ```
-
+{% endif %}
 ## Step 10: Git push
 
 ```bash

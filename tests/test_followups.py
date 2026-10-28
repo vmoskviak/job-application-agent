@@ -80,3 +80,29 @@ def test_main_falls_back_to_jobs_when_client_has_no_main():
     due, _ = find_due_followups(rows, today)
     d14 = next(d for d in due if d.row_id == "14")
     assert d14.account == "jobs"
+
+
+# --- контрактний ринок: follow-up за віком заявки (етап 2a) ---
+
+def test_find_due_by_age_contract_rows():
+    from datetime import date as _date
+
+    from bot.followups import find_due_by_age, parse_tracker_rows
+    from tests.inbox_fixtures import CONTRACT_TRACKER
+    rows = parse_tracker_rows(CONTRACT_TRACKER, 2026, aliases=["jobs", "main"])
+    assert rows[0].sent_on == "2026-10-22"
+    due, skipped = find_due_by_age(rows, _date(2026, 10, 29), days=7)
+    assert [d.company for d in due] == ["Example Co"]        # sent 2026-10-22 by email, Msg-ID in notes
+    assert due[0].msg_id == "1a2b3c4d5e6f7a8b" and due[0].deadline == "2026-10-29"
+    assert {s["company"]: s["reason"] for s in skipped}["Portal Co"].startswith("non-email channel")
+    assert all(d.company != "Fresh Co" for d in due)         # sent 2026-10-25: not due yet
+
+
+def test_followup_body_en_has_no_dashes_and_names_role():
+    from bot.followups import followup_body
+    body = followup_body("Android Engineer", "en", "Jordan Example", "+351 000")
+    assert "Android Engineer" in body and "–" not in body and "—" not in body
+    assert body.rstrip().endswith("Jordan Example\n+351 000")
+    assert 60 <= len(body.split()) <= 110
+    de = followup_body("Android Engineer", "de", "Jordan Example", "+351 000")
+    assert de.startswith("Sehr geehrte Damen und Herren") and "Android Engineer" in de

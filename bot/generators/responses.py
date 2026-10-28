@@ -6,18 +6,52 @@ from pathlib import Path
 from datetime import date
 from typing import Optional
 
-_REJECTED_KW  = ["leider", "absage", "nicht berücksichtigen", "anderweitig besetzt",
-                  "nicht in die engere auswahl", "müssen wir ihnen absagen",
-                  "konnten wir uns nicht", "bedauern wir"]
-_INTERVIEW_KW = ["einladen", "gespräch", "interview", "kennenlernen", "termin vereinbaren",
-                  "telefonat", "videocall", "zoom", "teams-call", "vorstellungsgespräch"]
+# Відмова, яку ні з чим не сплутати: ці фрази переважають слова про співбесіду
+# («nach unserem Gespräch müssen wir Ihnen leider absagen»).
+_REJECTED_KW  = ["absage", "nicht berücksichtigen", "anderweitig besetzt",
+                  "nicht in die engere auswahl", "engere wahl", "müssen wir ihnen absagen",
+                  "konnten wir uns nicht", "andere bewerber", "anderen kandidaten",
+                  "nach unserem gespräch", "nach dem gespräch",
+                  # англомовні ATS контрактного ринку (Greenhouse, Ashby, Lever)
+                  "not to move forward", "not be moving forward",
+                  "not moving forward", "decided to move forward with other",
+                  "decided to proceed with other"]
+# М'яке «на жаль»: у запрошенні теж буває («leider nur telefonisch»), тому
+# поступається словам про співбесіду.
+_REJECTED_SOFT_KW = ["leider", "bedauern wir", "unfortunately"]
+_INTERVIEW_KW = ["einladen", "einladung", "gespräch", "interview", "kennenlernen",
+                  "termin vereinbaren", "telefonat", "telefonisch", "anrufen", "rückruf",
+                  "videocall", "zoom", "teams-call", "vorstellungsgespräch"]
 _CONFIRMED_KW = ["eingangsbestätigung", "bewerbung erhalten", "bewerbung ist eingegangen",
                   "bewerbung ist bei uns eingegangen", "thank you for your application",
-                  "haben deine bewerbung erhalten", "erfolgreich eingegangen"]
+                  "haben deine bewerbung erhalten", "erfolgreich eingegangen",
+                  "thank you for applying", "received your application",
+                  "thanks for applying"]
 _INFO_KW      = ["bitte senden sie", "könnten sie uns", "noch folgende unterlagen",
                   "gehaltsvorstellung", "weitere informationen", "bitte teilen sie mit"]
 
 _DE_TRANSLIT = str.maketrans({"ä": "ae", "ö": "oe", "ü": "ue", "ß": "ss"})
+
+# Початок цитованої історії листування: Outlook/Gmail/Apple Mail, DE й EN.
+_QUOTE_RE = re.compile(
+    r"^(?:-{2,}\s*(?:ursprüngliche nachricht|original message|urspr\. nachricht)\s*-{2,}"
+    r"|von:\s.+\n(?:.*\n){0,3}?gesendet:\s"
+    r"|from:\s.+\n(?:.*\n){0,3}?sent:\s"
+    r"|am\s.+\sschrieb\s.*:\s*$"
+    r"|on\s.+\swrote:\s*$"
+    r"|>\s?\S)",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+
+def strip_quoted(body: str) -> str:
+    """Лише нова частина листа: цитата нижче належить іншому листу й іншому
+    класу (28.10.2026 запрошення BAMF стало «rejected» через «leider» у
+    власному листі кандидатки, процитованому під відповіддю)."""
+    m = _QUOTE_RE.search(body or "")
+    head = (body or "")[: m.start()] if m else (body or "")
+    # порожня нова частина (лист лише з цитатою) класифікується як є
+    return head if head.strip() else (body or "")
 
 
 def _fold(text: str) -> str:
@@ -27,6 +61,7 @@ def _fold(text: str) -> str:
 
 
 _REJECTED_KW_F  = [_fold(k) for k in _REJECTED_KW]
+_REJECTED_SOFT_KW_F = [_fold(k) for k in _REJECTED_SOFT_KW]
 _INTERVIEW_KW_F = [_fold(k) for k in _INTERVIEW_KW]
 _CONFIRMED_KW_F = [_fold(k) for k in _CONFIRMED_KW]
 _INFO_KW_F      = [_fold(k) for k in _INFO_KW]
@@ -34,12 +69,16 @@ _INFO_KW_F      = [_fold(k) for k in _INFO_KW]
 
 def classify_response(body: str) -> str:
     """Classify an email body.
-    Returns: rejected | interview | confirmed | info_request | unknown."""
-    folded = _fold(body)
+    Returns: rejected | interview | confirmed | info_request | unknown.
+    Цитована історія листа не читається; явна відмова переважає співбесіду,
+    м'яке «leider» поступається їй."""
+    folded = _fold(strip_quoted(body))
     if any(kw in folded for kw in _REJECTED_KW_F):
         return "rejected"
     if any(kw in folded for kw in _INTERVIEW_KW_F):
         return "interview"
+    if any(kw in folded for kw in _REJECTED_SOFT_KW_F):
+        return "rejected"
     if any(kw in folded for kw in _CONFIRMED_KW_F):
         return "confirmed"
     if any(kw in folded for kw in _INFO_KW_F):
@@ -175,8 +214,8 @@ def update_tracker_status(tracker_path: Path, company: str, new_status: str,
 
 
 # Токени, які самі по собі не ідентифікують компанію: міста NRW стоять у підписі
-# майже кожного листа. Інцидент 25.07.2026: лист Falk & Falk приліпився до
-# «Bildungswerk Düsseldorf», бо `duesseldorf` (10 літер) перебивав `falk` (4).
+# майже кожного листа, і якби перемагав найдовший токен, лист від «Falk & Falk»
+# приліпився б до «Kulturbüro Düsseldorf» через `duesseldorf` проти `falk`.
 _WEAK_TOKENS = frozenset({
     "duesseldorf", "koeln", "cologne", "bonn", "essen", "dortmund", "duisburg",
     "wuppertal", "bochum", "aachen", "muenster", "krefeld", "moenchengladbach",

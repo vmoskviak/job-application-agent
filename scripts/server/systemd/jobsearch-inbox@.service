@@ -1,0 +1,10 @@
+# Один прохід inbox watcher-а одного клієнта; запускає таймер jobsearch-inbox@<slug>.timer.
+# Тіньовий тиждень: JOBSEARCH_INBOX_DRY_RUN=1 у /root/.claude-env (юніт не редагувати:
+# для oneshot drop-in з ExecStart= додає другий запуск, а не замінює перший).
+[Unit]
+Description=jobsearch inbox watch (%i)
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/opt/jobsearch-autopilot/scripts/server/run_service.sh scripts/inbox_watch.py %i --days 2

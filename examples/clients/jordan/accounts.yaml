@@ -1,0 +1,19 @@
+# Вигадані акаунти: токени тут не лежать.
+gmail:
+  jobs:
+    address: jordan.jobs@example.com
+    creds_dir: jordan-jobs
+    role: Відправка чернеток і листів
+    may_delete: true
+  main:
+    address: jordan@example.com
+    creds_dir: jordan-main
+    role: Читання і відповіді в thread
+    may_delete: false
+    rescue_trash: false
+send_from: jobs
+playwright_profile: jordan
+# Telegram-бот етапу 2a: токен лише в оточенні (ім'я змінної тут), chat_id оператора.
+telegram:
+  token_env: JOBSEARCH_TELEGRAM_TOKEN_JORDAN
+  chat_id: 424242

@@ -4,6 +4,7 @@
 #   priority  менше = важливіше (порядок подачі в межах одного запуску)
 #   salary    зарплатне очікування на трек, якщо відрізняється від default_salary
 #   excluded  true — на трек не подаємось, але він потрібен, щоб відсіювати
+#   cv_file   контрактний ринок: файл CV у attachments/, який іде вкладенням на цей трек
 #   letter    блоки Anschreiben (anlass/fit/transfer/salary_hint) для tailoring;
 #             [FIRMA] і [JOBTITEL] підставляються
 default_priority: 7

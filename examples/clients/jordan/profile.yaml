@@ -1,0 +1,23 @@
+# Контакти й параметри ставки. Вигаданий контрактний клієнт: приклад і тестова фікстура.
+slug: jordan
+status: active
+market: contract
+report_lang: en
+first_name: Jordan
+last_name: Example
+email: jordan@example.com
+phone: +351 21 000 0000
+phone_prefix: '+351'
+city: Lisbon
+country: Portugal
+availability: within 2 weeks
+rate:
+  currency_default: EUR
+  hourly_min: 80
+  hourly_target: 95
+  daily_target: 760
+  usd_hourly_target: 115
+  quote_policy: omit_first_contact
+# Рядок під підписом у листах і чернетках відповідей (як у cover_note.build_note)
+cv_contact_extra:
+- 'Freelance (B2B contract) · Remote, CET'

@@ -1,9 +1,10 @@
 from __future__ import annotations
+
 import contextlib
 import fcntl
 import random
 import time
-from typing import Iterator
+from collections.abc import Callable, Iterator
 
 from bot.scrapers.profile import LOCK_FILE, PROFILE_DIR
 
@@ -43,7 +44,14 @@ def _rate_limit() -> None:
     _last_nav_at = time.time()
 
 
-def get_context():
+def get_context(headed: bool = False):
+    """Спільний persistent-контекст профілю; запускається один раз на процес.
+
+    headed=True: видиме вікно (дисплей сервера, VNC) без ознаки автоматизації,
+    як у scripts/relogin.py; так працює ATS-воркер, щоб оператор доробив
+    hand-off у тій самій вкладці. Режим обирає перший виклик: наступний виклик
+    з іншим `headed` повертає вже відкритий контекст, не перезапускаючи його.
+    """
     global _context, _playwright
     if _context is not None:
         return _context
@@ -56,11 +64,13 @@ def get_context():
 
     PROFILE_DIR.mkdir(parents=True, exist_ok=True)
     _playwright = sync_playwright().start()
+    extra = {"args": ["--disable-blink-features=AutomationControlled"]} if headed else {}
     _context = _playwright.chromium.launch_persistent_context(
         user_data_dir=str(PROFILE_DIR),
-        headless=True,
+        headless=not headed,
         viewport={"width": 1280, "height": 900},
         locale="de-DE",
+        **extra,
     )
     return _context
 
@@ -71,24 +81,30 @@ def get_context():
 MIN_BODY_CHARS = 1200
 
 
-def settle_body(page, settle_ms: int, text: str) -> str:
+def settle_body(page, settle_ms: int, text: str,
+                ready: Callable[[str], bool] | None = None) -> str:
     """Чекає (до settle_ms), поки body-текст перестане рости і набере обсяг.
 
     SPA (logged-in LinkedIn, XING) рендерять опис вакансії асинхронно, і зріз
-    на domcontentloaded ловить саму навігацію.
+    на domcontentloaded ловить саму навігацію. `ready` (за доменом) додає власну
+    умову: залогінена оболонка GULP довша за MIN_BODY_CHARS і не росте, а
+    проєкту ще нема, тож без `ready(text)` чекаємо далі. Бюджет вичерпано:
+    повертаємо останній текст як є.
     """
     deadline = time.time() + settle_ms / 1000
     while settle_ms and time.time() < deadline:
         page.wait_for_timeout(1000)
         grown = page.inner_text("body")
-        if len(grown) == len(text) and len(grown) >= MIN_BODY_CHARS:
+        if (len(grown) == len(text) and len(grown) >= MIN_BODY_CHARS
+                and (ready is None or ready(grown))):
             return grown
         text = grown
     return text
 
 
 def fetch_with_browser(
-    url: str, timeout_ms: int = 25000, settle_ms: int = 0
+    url: str, timeout_ms: int = 25000, settle_ms: int = 0,
+    ready: Callable[[str], bool] | None = None,
 ) -> tuple[str, str]:
     """Returns (text, html)."""
     with profile_lock():
@@ -98,7 +114,7 @@ def fetch_with_browser(
         try:
             page.goto(url, wait_until="domcontentloaded", timeout=timeout_ms)
             page.wait_for_timeout(800)
-            text = settle_body(page, settle_ms, page.inner_text("body"))
+            text = settle_body(page, settle_ms, page.inner_text("body"), ready=ready)
 
             html = page.content()
             return text, html

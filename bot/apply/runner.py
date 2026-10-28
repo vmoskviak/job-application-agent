@@ -18,6 +18,7 @@ Tracker НЕ редагує — статуси оновлює morning-агент
 from __future__ import annotations
 
 import argparse
+import importlib
 import json
 import os
 import re
@@ -33,8 +34,17 @@ from bot.filters.rules import MAX_SUBMISSIONS_PER_RUN
 from bot.generators.cv_engine import CV_FILE_STEM
 
 _PORTAL_MODULES = {"stepstone": stepstone, "xing": xing,
-                   "oracle_cx": oracle_cx,
-                   "interamt": interamt}
+                   "oracle_cx": oracle_cx, "interamt": interamt}
+# Модулі під сайти окремих роботодавців: у публічній копії рушія їх нема, тому
+# підключаються лише коли файл присутній. Кожен оголошує HOSTS для portal_from_url.
+_EMPLOYER_HOSTS: dict[str, tuple[str, ...]] = {}
+for _name in ("check24", "eismann"):
+    try:
+        _module = importlib.import_module(f"bot.apply.{_name}")
+    except ImportError:
+        continue
+    _PORTAL_MODULES[_name] = _module
+    _EMPLOYER_HOSTS[_name] = tuple(_module.HOSTS)
 
 
 def portal_from_url(url: str) -> str | None:
@@ -43,7 +53,10 @@ def portal_from_url(url: str) -> str | None:
         return "stepstone"
     if "xing.com" in u:
         return "xing"
-    # Oracle CX Recruiting (корпоративні портали): <host>/<lang>/sites/<SITE>/job/<id>
+    for name, hosts in _EMPLOYER_HOSTS.items():
+        if any(h in u for h in hosts):
+            return name
+    # Oracle CX Recruiting: <host>/<lang>/sites/<SITE>/job/<id>
     if re.search(r"/sites/[^/]+/job/\d+", u):
         return "oracle_cx"
     if "interamt.de" in u:

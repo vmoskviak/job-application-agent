@@ -14,8 +14,8 @@ def load_batch_file(path: Path) -> list[dict]:
 def split_email_and_portal(items: list[dict]) -> tuple[list[dict], list[dict]]:
     """Split batch items into email-sendable vs portal-only.
 
-    Компанії з EMAIL_DEAD_COMPANIES (Beispielwerk, Alpenwerk — вкладення з пошти
-    видаляють, DSGVO) втрачають email прямо в job-dict: далі той самий dict іде
+    Компанії з EMAIL_DEAD_COMPANIES (роботодавці, що видаляють вкладення з
+    пошти через DSGVO) втрачають email прямо в job-dict: далі той самий dict іде
     в render_from_data, і без цієї мутації там записався б email_draft.json."""
     from bot.filters.rules import email_channel_blocked
 
@@ -53,8 +53,9 @@ def batch_summary_report(
     return "\n".join(lines)
 
 
-def render_all(batch_file: Path, applications_dir: Path) -> None:
-    """Render all items in batch file. Prints report when done."""
+def render_all(batch_file: Path, applications_dir: Path) -> list[str]:
+    """Render all items in batch file. Prints report when done.
+    Повертає «компанія — роль» пакетів, які render_from_data відхилив."""
     sys.path.insert(0, str(Path(__file__).parent.parent.parent))
     from new_app import render_from_data
 
@@ -63,14 +64,23 @@ def render_all(batch_file: Path, applications_dir: Path) -> None:
 
     print(f"[batch] {len(items)} заявок: {len(email_items)} email + {len(portal_items)} portal")
     ready_names: list[str] = []
+    failed: list[str] = []
 
     for i, item in enumerate(items, 1):
         company = item["job"]["company"]
         title   = item["job"]["title"]
         print(f"\n[{i}/{len(items)}] {company} — {title}")
         app_dir = render_from_data(item["job"], item["tailored"])
-        if app_dir and item["job"].get("email"):
+        if app_dir is None:
+            failed.append(f"{company} — {title}")
+        elif item["job"].get("email"):
             ready_names.append(company)
 
-    portal_names = [it["job"]["company"] for it in portal_items]
+    portal_names = [it["job"]["company"] for it in portal_items
+                    if f"{it['job']['company']} — {it['job']['title']}" not in failed]
     print("\n" + batch_summary_report(items, ready_names, portal_names))
+    if failed:
+        print(f"\n⛔ НЕ зрендерено ({len(failed)}), у чергу подачі не ставити:")
+        for name in failed:
+            print(f"  - {name}")
+    return failed

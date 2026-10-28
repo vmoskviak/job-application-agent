@@ -16,7 +16,7 @@ search.yaml:
     - {query: Dolmetscher Ukrainisch, location: Düsseldorf, radius: 15, portals: [linkedin]}
 
 Кожен запис ставиться на всіх трьох порталах, якщо не звужено `portals`.
-Механіка (перевірено 07.10.2026 на реальному клієнті): StepStone — кнопка «Schickt mir neue
+Механіка (станом на 07.10.2026): StepStone — кнопка «Schickt mir neue
 Jobs per E-Mail.» відкриває модал, у ньому `[data-testid=ja-submit-button]`;
 LinkedIn — перемикач `.artdeco-toggle__text` («Benachrichtigung: Ein»); XING —
 `label:has-text("Benachrichtigungen für neue Jobs")`. Скріншоти після кожного
