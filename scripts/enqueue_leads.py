@@ -1,27 +1,31 @@
 #!/usr/bin/env python3
-"""Відібрані ліди вечірнього рану → пакети → перевірки → черга (етап 2b).
+"""Selected leads of the evening run → packages → checks → queue (stage 2b).
 
     js scripts/enqueue_leads.py --date YYYY-MM-DD [--filtered PATH] [--notes DIR]
     js scripts/enqueue_leads.py --date YYYY-MM-DD --rechannel
-    js scripts/enqueue_leads.py --date YYYY-MM-DD            (ринок найму: manual_link-ліди
-                                                            з пакетами applications/<дата>/)
+    js scripts/enqueue_leads.py --date YYYY-MM-DD            (employment market: manual_link and
+                                                            linkedin leads with packages in
+                                                            applications/<date>/, plus StepStone and
+                                                            XING leads the runner found external)
 
-Для кожного selected з var/run/filtered_<дата>.json, що має нотатку в
-var/run/notes_<дата>/<slug>.txt: канал подачі (bot.ats, без логіну LinkedIn),
-папка var/run/packages_<дата>/<slug>/, перевірки bot.presend (з вимикачами
-платформ з targeting.yaml), запис у var/state/queue.jsonl (queued або held).
---rechannel: готові пакети дати заново проходять резолвер (канал з
-lead.source_url), lead.json переписується, перевірки й черга повторюються;
-пакети, чий запис уже queued, sending, sent, handoff чи failed, не чіпаються
-(failed міг уже стати подачею: зведення перелічує їх у skipped_failed).
-Друкує один JSON-рядок зі зведенням. Нічого не шле: відправляє диспетчер
-(scripts/dispatch_leads.py).
+For every selected lead in var/run/filtered_<date>.json that has a note in
+var/run/notes_<date>/<slug>.txt: the channel (bot.ats, without a LinkedIn login), the
+folder var/run/packages_<date>/<slug>/, the bot.presend checks (with the platform
+switches and daily limits from targeting.yaml), a record in var/state/queue.jsonl
+(queued or held). --rechannel: the date's finished packages go through the resolver
+again (channel from lead.source_url), lead.json is rewritten, checks and queue repeat;
+packages whose record is already queued, sending, sent, handoff or failed are left alone
+(a failed one may already be an application: the summary lists them in skipped_failed).
+Prints one JSON line with the summary. Sends nothing: the dispatcher sends
+(scripts/dispatch_leads.py), the browser worker applies (scripts/apply_leads.py).
 """
 from __future__ import annotations
 
 import argparse
 import dataclasses
 import json
+import os
+import re
 import sys
 from collections.abc import Callable
 from datetime import datetime, timezone
@@ -31,19 +35,27 @@ ENGINE = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ENGINE))
 
 from bot import client as _client
-from bot.ats import BoardClient, HttpxBoardClient, resolve_channel
+from bot.apply.job_boards import board_of, employer_url_ok
+from bot.apply.models import ApplyResult, external_application, load_result
+from bot.ats import BoardClient, HttpxBoardClient, Resolution, ats_from_url, resolve_channel
 from bot.generators.cover_note import _agency_match, build_note, note_language, slugged
 from bot.packages import SKIPPED_FILE, Package, build_packages, load_packages
 from bot.platforms import declared
 from bot.presend import check_package
-from bot.sendqueue import APPLICATION_STATUSES, QUEUE_FILE, enqueue, lead_id
+from bot.sendqueue import APPLICATION_STATUSES, QUEUE_FILE, enqueue, lead_id, limits_from
 from bot.state import JsonlStore, state_dir
 
 USER_AGENT = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
               "(KHTML, like Gecko) Chrome/130.0 Safari/537.36")
 EXIT_NO_INPUT = 2
-# Ключі, які пише резолвер у lead.json; без них лід знову є записом selected.
+# Keys the resolver writes into lead.json; without them the lead is a selected record again.
 RESOLVER_KEYS = ("channel", "apply_url", "ats", "resolver_note", "board_workplace", "board_location")
+# Employment market: filter channels (bot.filters.rules.classify_channel) the browser worker applies on.
+WORKER_CHANNELS = ("manual_link", "linkedin")
+# Filter channels the portal runner (bot.apply.runner) applies on; an external posting there goes to the worker.
+PORTAL_CHANNELS = ("stepstone_auto", "xing_auto")
+LOOKUP_NOTE = "employer page by lookup (board posting without an employer link)"
+_URL_IN_TEXT = re.compile(r"https?://[^\s\"'<>]+")
 
 
 def fetch_html(url: str) -> str | None:
@@ -182,15 +194,31 @@ def batch_notes(paths: list[Path]) -> dict[tuple[str, str], str]:
 
 
 def run_employment(c: _client.Client, date: str, filtered: list[Path], batches: list[Path], applications_dir: Path,
-                   attachments_dir: Path, fetch: Callable[[str], str | None], today_text: str) -> dict:
-    """Ліди manual_link ринку найму → черга воркера (apply_leads) з пакетами з applications/<дата>/.
-    Канал: resolve_channel(market=de_employment). StepStone/XING/Interamt сюди не йдуть, їх веде runner."""
+                   attachments_dir: Path, fetch: Callable[[str], str | None], today_text: str,
+                   lookup: Callable[[str, str, str], object] | None = None) -> dict:
+    """Employment-market leads for the browser worker (apply_leads) with packages from applications/<date>/.
+
+    apply_channel manual_link (the employer's form) and linkedin. The channel comes from
+    resolve_channel(market=de_employment): a LinkedIn posting becomes linkedin_easy (Easy Apply) or
+    linkedin_offsite (the worker reads the external Apply link under the login and fills that form),
+    both with platform linkedin, so targeting.platforms.linkedin and daily_limits.linkedin apply.
+    StepStone/XING/Interamt leads are the runner's (bot.apply.runner, earlier in the morning run). A
+    StepStone or XING lead comes here only when the runner met an external application
+    (`external_application` of its apply_result.json): the employer's form goes to the worker at the
+    URL the runner recorded, else the one in the posting page (`resolve_channel`). Without one the
+    lead is held as no_employer_url; a board page is never queued. A lead the runner submitted, or
+    stopped inside the portal's own form, is not taken."""
     from bot.filters.rules import normalize_company
 
     selected: list[dict] = []
+    portal: list[dict] = []
     for path in filtered:
         if Path(path).exists():
-            selected.extend(e for e in _selected(Path(path)) if e.get("apply_channel") == "manual_link")
+            for e in _selected(Path(path)):
+                if e.get("apply_channel") in WORKER_CHANNELS:
+                    selected.append(e)
+                elif e.get("apply_channel") in PORTAL_CHANNELS:
+                    portal.append(e)
     notes = batch_notes(batches)
     store = JsonlStore(state_dir(c.var) / QUEUE_FILE)
     existing = {r.get("id") for r in store.read()}
@@ -199,12 +227,29 @@ def run_employment(c: _client.Client, date: str, filtered: list[Path], batches: 
     held: list[dict] = []
     skipped: list[dict] = []
     created = today_text
-    for slug, entry in slugged(selected):
+    # (slug, entry, package dir, resolution or None for the resolver); worker slugs keep their
+    # numbering, a portal lead with a slug already taken is the same job and is left out.
+    leads: list[tuple[str, dict, Path | None, object]] = [
+        (slug, entry, find_application_dir(Path(applications_dir) / date, entry), None)
+        for slug, entry in slugged(selected)]
+    taken = {slug for slug, *_ in leads}
+    for slug, entry in slugged(portal):
         app_dir = find_application_dir(Path(applications_dir) / date, entry)
+        result = load_result(app_dir) if app_dir is not None else None
+        if slug not in taken and external_application(result):
+            leads.append((slug, entry, app_dir, _portal_resolution(entry, result, fetch)))
+    for slug, entry, app_dir, res in leads:
         if app_dir is None:
             skipped.append({"slug": slug, "reason": "no_package"})
             continue
-        res = resolve_channel(entry, fetch, HttpxBoardClient(), market="de_employment")
+        if res is None:
+            res = resolve_channel(entry, fetch, HttpxBoardClient(), market="de_employment")
+        if res.channel == "none" and board_of(res.apply_url) and lookup is not None:
+            # A board posting without the employer's link: the employer lookup may find the job's own page.
+            posting = lookup(str(entry.get("company") or ""), str(entry.get("title") or ""),
+                             str(entry.get("location") or ""))
+            if posting is not None:
+                res = Resolution("form", posting.url, ats_from_url(posting.url), LOOKUP_NOTE)
         attachments = employment_attachments(app_dir, c.cv, attachments_dir)
         note = notes.get((normalize_company(entry.get("company") or ""), (entry.get("title") or "").strip().lower()), "")
         lead = {**entry, "channel": res.channel, "apply_url": res.apply_url, "ats": res.ats,
@@ -215,23 +260,40 @@ def run_employment(c: _client.Client, date: str, filtered: list[Path], batches: 
             {"slug": slug, "lang": "de", "subject": "", "attachments": [str(p) for p in attachments],
              "created": created}, ensure_ascii=False, indent=1), encoding="utf-8")
         pkg = Package(slug, app_dir, lead, res.channel, res.apply_url, res.ats, "de", "", note, attachments)
-        rec = enqueue(store, pkg, check(pkg, "de"), date, today_text)
+        reasons = check(pkg, "de")
+        if res.channel == "none" and board_of(res.apply_url):
+            # a board posting without the employer's apply URL: say so instead of channel_none
+            reasons = ["no_employer_url"] + [r for r in reasons if r != "channel_none"]
+        rec = enqueue(store, pkg, reasons, date, today_text)
         if rec["id"] not in existing:
             _count(rec, slug, queued, held)
-    return {"date": date, "packages": len(selected) - len(skipped), "queued": queued, "held": held,
+    return {"date": date, "packages": len(leads) - len(skipped), "queued": queued, "held": held,
             "skipped": skipped}
 
 
+def _portal_resolution(entry: dict, result: ApplyResult, fetch: Callable[[str], str | None]) -> Resolution:
+    """The employer's form of an external StepStone or XING posting: the URL the runner recorded,
+    else a URL in its reason (StepStone's hand-off), else the one on the posting page."""
+    for url in [result.employer_url, *_URL_IN_TEXT.findall(result.reason or "")]:
+        if url and employer_url_ok(url):
+            return Resolution("form", url, ats_from_url(url), f"{result.portal} external application, "
+                                                              "employer url from the runner")
+    # without the email: the runner's lead is an application through a form, not a mail
+    return resolve_channel({k: v for k, v in entry.items() if k != "email"}, fetch, HttpxBoardClient(),
+                           market="de_employment")
+
+
 def _checker(c: _client.Client, agencies: list[str]) -> Callable[..., list[str]]:
-    """check_package з параметрами клієнта; лишаються пакет і очікувана мова."""
+    """check_package with the client's parameters; the package and the expected language remain."""
     hourly_min = (c.profile.get("rate") or {}).get("hourly_min")
     forbidden = [str(n) for n in (c.targeting.get("forbidden_names") or [])]
     platforms = declared(c.targeting)
+    limits = limits_from(c.targeting)
 
     def check(pkg, lang: str) -> list[str]:
         return check_package(pkg, tracker_path=c.tracker, expected_lang=lang, forbidden_names=forbidden,
                              hourly_min=int(hourly_min) if hourly_min else None,
-                             is_agency=_agency_match(pkg.lead, agencies), platforms=platforms)
+                             is_agency=_agency_match(pkg.lead, agencies), platforms=platforms, limits=limits)
     return check
 
 
@@ -271,7 +333,11 @@ def main(argv: list[str] | None = None) -> int:
             c.run_dir / f"filtered_{args.date}.json"]
         batches = [c.run_dir / f"batch_{prev}.json", c.run_dir / f"batch_alerts_{args.date}.json",
                    c.run_dir / f"batch_{args.date}.json"]
-        out = run_employment(c, args.date, filtered_paths, batches, c.applications, c.attachments, fetch_html, now)
+        from bot.apply.employer_lookup import KEY_ENV, find_posting
+
+        lookup = find_posting if os.environ.get(KEY_ENV) else None
+        out = run_employment(c, args.date, filtered_paths, batches, c.applications, c.attachments, fetch_html, now,
+                             lookup=lookup)
         print(json.dumps(out, ensure_ascii=False))
         return 0
     filtered = args.filtered or c.run_dir / f"filtered_{args.date}.json"

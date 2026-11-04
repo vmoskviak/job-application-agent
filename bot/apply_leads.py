@@ -6,13 +6,16 @@ linkedin_easy і platform_login. Порядок у проході: спершу 
 (дешева резолюція), потім form, linkedin_easy, platform_login, щоб конверсії
 відбулися до того, як витрачено квоту платформ; усередині каналу порядок файла.
 
-linkedin_offsite: під локом машини сторінка LinkedIn віддає зовнішнє посилання;
-запис стає form з ATS за хостом (lead.json пакета теж), і той самий прохід
-подає його як form, якщо дозволяє ліміт form. Резолюція не рахується в жоден
-ліміт і нічого не подає, тож тіньова репетиція (глобальний dry_run чи linkedin
-shadow) теж резолвить: переписує запис черги й lead.json пакета. Закрита
-вакансія або сторінка без посилання: held. Збій браузера під час резолюції:
-failed у живому режимі, у тіньовому лише рядок у queue_dry.jsonl.
+linkedin_offsite: under the machine lock the LinkedIn page gives the external link;
+the record becomes form with the ATS from the host (the package's lead.json too), and
+the same pass submits it as form if the form limit allows. A page with the Easy Apply
+button instead of an external link (the enqueue resolver could not read the guest page
+and guessed offsite) turns the record into linkedin_easy, and the same pass applies with
+Easy Apply within the linkedin switch and limits. The resolution counts against no limit
+and submits nothing, so a shadow rehearsal (global dry_run or linkedin shadow) resolves
+too: it rewrites the queue record and the package's lead.json. A closed posting or a page
+without a link: held. A browser failure during the resolution: failed in live mode, only
+a line in queue_dry.jsonl in shadow mode.
 
 Платформа запису (linkedin, gulp, freelancermap...) має вимикач з
 bot.platforms.effective: off пропускає лід не чіпаючи (skipped_platform),
@@ -30,9 +33,14 @@ login_required і restricted не валять лід: він лишається
 
 Для кожної подачі: запис стає sending, під локом машини драйвер заповнює й
 подає, далі sent (рядок у трекері, квитанція), held (вакансія закрита), failed
-(картка) або handoff. Hand-off: картка з кнопками «Подано» / «Пропустити»,
-вкладка лишається відкритою на сервері, прохід чекає без лока до
-handoff_until і після нього зупиняється (один hand-off на прохід). Після
+(картка) або handoff.
+Hand-off does not block the pass: the card (buttons "Подано" / "Пропустити") goes
+out right away, the tab stays open on the server and the pass moves on to the
+remaining leads. Between leads every open hand-off is polled once (card answer,
+closed tab, confirmation on its page); after the queue the pass waits for all of
+them together, without the machine lock, until handoff_until, and the ones still
+open then expire. A /pause mid-pass starts no new lead but still waits for the
+hand-offs already open, so their tabs and records end in a defined state. Після
 handoff_until живих подач нема: hand-off уже ніхто не дочекається. Hand-off,
 що пережив свій день або дедлайн, на старті наступного проходу закривається за
 відповіддю на картці (подано, пропущено) або стає failed. Завислий запис у
@@ -85,12 +93,15 @@ log = logging.getLogger(__name__)
 ERROR_CUT = 500
 FORM = "form"
 OFFSITE = "linkedin_offsite"
-CHANNELS = (FORM, OFFSITE, "linkedin_easy", "platform_login")
+EASY = "linkedin_easy"
+CHANNELS = (FORM, OFFSITE, EASY, "platform_login")
 # Порядок каналів у проході: дешеві конверсії (резолюція offsite, форми) до квоти платформ.
-PASS_ORDER = (OFFSITE, FORM, "linkedin_easy", "platform_login")
+PASS_ORDER = (OFFSITE, FORM, EASY, "platform_login")
 # Результати, після яких платформа вимикається до кінця дня, а лід лишається queued.
 ACCOUNT_STOP = ("login_required", "restricted")
 OFFSITE_NOTE = "linkedin offsite, external link"
+LOOKUP_NOTE = "linkedin offsite without apply link, employer page by lookup"
+EASY_NOTE = "linkedin easy apply, logged-in page"
 # Форма в sending довше за це: процес упав посеред заповнення чи Submit. Має
 # перевищувати lock_wait (300 с) плюс найдовшу подачу, тому 45 хв.
 STALE_SENDING_MINUTES = 45
@@ -104,7 +115,7 @@ class Driver(Protocol):
 
     def open(self, url: str) -> object: ...
     def apply(self, page, url: str, ctx: AnswerContext, dry_run: bool, channel: str) -> ApplyResult: ...
-    # стан restricted | login_required | closed | open і зовнішнє посилання (None, якщо його нема)
+    # state restricted | login_required | closed | open | easy_apply and the external link (None if there is none)
     def resolve_offsite(self, page, url: str) -> tuple[str, str | None]: ...
     def probe_submitted(self, page) -> str: ...   # фраза підтвердження або ""
     def is_closed(self, page) -> bool: ...        # оператор закрив вкладку hand-off
@@ -136,6 +147,9 @@ class ApplyConfig:
     # Спільний бот оператора (telegram.mode: notify) не приймає кнопок цього клієнта:
     # картка hand-off без кнопок, завершення за сторінкою (підтвердження чи закрита вкладка).
     handoff_buttons: bool = True
+    # The employer's own page for a job a board hides (bot.apply.employer_lookup.find_posting):
+    # (company, title, city) -> Posting | None. None: no lookup, the lead is held as before.
+    lookup: Callable[[str, str, str], object] | None = None
 
 
 @dataclass
@@ -287,7 +301,7 @@ def _lead_of(rec: dict, pkg: Package | None) -> tuple[dict, str | None]:
     return {"company": rec.get("company"), "title": rec.get("title")}, None
 
 
-def _submitted(store: JsonlStore, rec: dict, lead: dict, ats: str | None, url: str, sent_id: str,
+def _submitted(store: JsonlStore, cards: JsonlStore, rec: dict, lead: dict, ats: str | None, url: str, sent_id: str,
                screenshots: list[str], now: str, tracker: Path, res: ApplyPassResult, transport,
                cfg: ApplyConfig) -> None:
     """sent ДО трекера (повторна подача гірша за відсутній рядок), рядок у трекері, квитанція.
@@ -297,6 +311,7 @@ def _submitted(store: JsonlStore, rec: dict, lead: dict, ats: str | None, url: s
     today = now[:10]
     mark(store, rec["id"], status="sent", sent_id=sent_id, sent_at=now, screenshots=list(screenshots))
     res.sent.append(rec["id"])
+    _close_lead_cards(cards, rec["id"], "done", now)
     tracker_error = ""
     try:
         until = (date.fromisoformat(today) + timedelta(days=cfg.followup_days)).isoformat()
@@ -327,6 +342,36 @@ def _submitted(store: JsonlStore, rec: dict, lead: dict, ats: str | None, url: s
         log.warning("квитанцію для %s не вдалося надіслати", rec.get("id"), exc_info=True)
 
 
+def _open_handoff_card(cards: JsonlStore, record: dict) -> None:
+    """One record per card id. The id comes from the lead id, so a lead that reaches hand-off again
+    reuses its card; a second record would sit behind the first, and cards.get() would read the old
+    answer (02.11.2026: an earlier «skipped» resolved the new card at once, the new one stayed open)."""
+    if cards.get(record["id"]) is None:
+        cards.append(record)
+    else:
+        cards.update(record["id"], **record, closed_at=None)
+
+
+def _close_lead_cards(cards: JsonlStore, lead_id: str, status: str, at: str) -> None:
+    """Closes every open hand-off card of a lead that is decided (sent: done, held: skipped)."""
+    for card in cards.read():
+        if card.get("kind") == "handoff" and card.get("lead_id") == lead_id and card.get("status") == "open":
+            cards.update(card["id"], status=status, closed_at=at)
+
+
+def _close_decided_cards(store: JsonlStore, cards: JsonlStore, now: str) -> None:
+    """Open hand-off cards of leads already sent or held, e.g. marked by hand after a manual
+    submit: they would hang in /status and the hand-off list for days."""
+    closing = {"sent": "done", "held": "skipped"}
+    status_of = {rec.get("id"): rec.get("status") for rec in store.read()}
+    for card in cards.read():
+        if card.get("kind") != "handoff" or card.get("status") != "open":
+            continue
+        new = closing.get(status_of.get(card.get("lead_id")) or "")
+        if new:
+            cards.update(card["id"], status=new, closed_at=now)
+
+
 def _expire_handoffs(store: JsonlStore, cards: JsonlStore, now: datetime, tracker: Path, res: ApplyPassResult,
                      transport, cfg: ApplyConfig) -> None:
     """Hand-off з минулого дня або після сьогоднішнього дедлайну, на який ніхто вже не чекає:
@@ -344,7 +389,7 @@ def _expire_handoffs(store: JsonlStore, cards: JsonlStore, now: datetime, tracke
         answer = (card or {}).get("status")
         if answer == "done":
             lead, ats = _lead_of(rec, _package_for(rec))
-            _submitted(store, rec, lead, ats, rec.get("apply_url") or card.get("url") or "", f"{_label(rec)}:operator",
+            _submitted(store, cards, rec, lead, ats, rec.get("apply_url") or card.get("url") or "", f"{_label(rec)}:operator",
                        rec.get("screenshots") or [], str(card.get("closed_at") or now.strftime(_FMT)),
                        tracker, res, transport, cfg)
             continue
@@ -368,53 +413,93 @@ def _expire_sending(store: JsonlStore, now: str, res: ApplyPassResult, transport
                           "check the portal or the confirmation mail before re-queueing", res, transport, cfg)
 
 
-def _wait_handoff(store: JsonlStore, cards: JsonlStore, rec: dict, lead: dict, ats: str | None, url: str,
-                  cid: str, reason: str, shots: list[str], page, driver: Driver, tracker: Path,
-                  res: ApplyPassResult, transport, cfg: ApplyConfig, now: Callable[[], datetime],
-                  sleep: Callable[[float], None]) -> None:
-    """Картка оператору і очікування його або сторінки до дедлайну; лок машини тут не тримається.
-    Сторінка закривається на кожному виході."""
-    deadline = handoff_deadline(now(), cfg.handoff_until)
+@dataclass
+class _Handoff:
+    """A live lead waiting for the operator: its card is posted and its page stays open."""
+    rec: dict
+    lead: dict
+    ats: str | None
+    url: str
+    cid: str
+    shots: list[str]
+    page: object
+
+
+def _post_handoff(store: JsonlStore, cards: JsonlStore, h: _Handoff, reason: str, driver: Driver,
+                  res: ApplyPassResult, transport, cfg: ApplyConfig) -> bool:
+    """Sends the hand-off card. Without a card nobody knows about the tab: the lead fails
+    and its page is closed (False)."""
+    card = handoff_card(h.lead.get("company") or "", h.lead.get("title") or "", reason, h.url, cfg.vnc_hint,
+                        h.cid, cfg.lang)
     try:
-        card = handoff_card(lead.get("company") or "", lead.get("title") or "", reason, url, cfg.vnc_hint, cid,
-                            cfg.lang)
-        try:
-            _post(transport, cfg.chat_id, card.text, card.buttons if cfg.handoff_buttons else [])
-        except Exception as e:  # noqa: BLE001 — без картки оператор не знає про вкладку: чекати нема кого
-            cards.update(cid, status="not_posted")
-            mark(store, rec["id"], status="failed", error=f"handoff card not posted: {e}"[:ERROR_CUT])
-            res.failed.append(rec["id"])
-            return
-        while True:
-            sleep(cfg.poll_seconds)
-            status = (cards.get(cid) or {}).get("status")
-            if status == "done":
-                if (store.get(rec["id"]) or {}).get("status") == "sent":
-                    res.sent.append(rec["id"])   # диспетчер уже закрив лід і записав рядок у трекер
-                else:
-                    _submitted(store, rec, lead, ats, url, f"{_label(rec)}:operator", shots, now().strftime(_FMT),
-                               tracker, res, transport, cfg)
-                return
-            if status == "skipped":
-                mark(store, rec["id"], status="held", reasons=["operator_skipped"])
-                return
-            if driver.is_closed(page):
-                # без кнопок відмова оператора це закрита вкладка
-                cards.update(cid, status="skipped", closed_at=now().strftime(_FMT))
-                mark(store, rec["id"], status="held", reasons=["operator_skipped"])
-                return
-            phrase = driver.probe_submitted(page)
-            if phrase:
-                cards.update(cid, status="done", closed_at=now().strftime(_FMT))
-                _submitted(store, rec, lead, ats, url, f"{_label(rec)}:{phrase}", shots, now().strftime(_FMT),
-                           tracker, res, transport, cfg)
-                return
-            if now() >= deadline:
-                cards.update(cid, status="expired")
-                _fail(store, rec, f"handoff_expired: no answer by {cfg.handoff_until}", res, transport, cfg)
-                return
-    finally:
-        driver.close(page)
+        _post(transport, cfg.chat_id, card.text, card.buttons if cfg.handoff_buttons else [])
+    except Exception as e:  # noqa: BLE001 — no card means nobody to wait for
+        cards.update(h.cid, status="not_posted")
+        mark(store, h.rec["id"], status="failed", error=f"handoff card not posted: {e}"[:ERROR_CUT])
+        res.failed.append(h.rec["id"])
+        driver.close(h.page)
+        return False
+    return True
+
+
+def _check_handoff(store: JsonlStore, cards: JsonlStore, h: _Handoff, driver: Driver, tracker: Path,
+                   res: ApplyPassResult, transport, cfg: ApplyConfig, now: Callable[[], datetime]) -> bool:
+    """One look at an open hand-off: True once it is resolved (card answer, closed tab or a
+    confirmation on its page). Does not close the page and does not sleep."""
+    rid = h.rec["id"]
+    status = (cards.get(h.cid) or {}).get("status")
+    if status == "done":
+        if (store.get(rid) or {}).get("status") == "sent":
+            res.sent.append(rid)   # the dispatcher already closed the lead and wrote the tracker row
+        else:
+            _submitted(store, cards, h.rec, h.lead, h.ats, h.url, f"{_label(h.rec)}:operator", h.shots,
+                       now().strftime(_FMT), tracker, res, transport, cfg)
+        return True
+    if status == "skipped":
+        mark(store, rid, status="held", reasons=["operator_skipped"])
+        return True
+    if driver.is_closed(h.page):
+        # without buttons a closed tab is the operator's "skip"
+        cards.update(h.cid, status="skipped", closed_at=now().strftime(_FMT))
+        mark(store, rid, status="held", reasons=["operator_skipped"])
+        return True
+    phrase = driver.probe_submitted(h.page)
+    if phrase:
+        cards.update(h.cid, status="done", closed_at=now().strftime(_FMT))
+        _submitted(store, cards, h.rec, h.lead, h.ats, h.url, f"{_label(h.rec)}:{phrase}", h.shots,
+                   now().strftime(_FMT), tracker, res, transport, cfg)
+        return True
+    return False
+
+
+def _poll_handoffs(pending: list[_Handoff], store: JsonlStore, cards: JsonlStore, driver: Driver, tracker: Path,
+                   res: ApplyPassResult, transport, cfg: ApplyConfig, now: Callable[[], datetime]) -> None:
+    """Checks every open hand-off once; resolved ones leave `pending` with their page closed."""
+    for h in list(pending):
+        if _check_handoff(store, cards, h, driver, tracker, res, transport, cfg, now):
+            pending.remove(h)
+            driver.close(h.page)
+
+
+def _wait_handoffs(pending: list[_Handoff], store: JsonlStore, cards: JsonlStore, driver: Driver, tracker: Path,
+                   res: ApplyPassResult, transport, cfg: ApplyConfig, now: Callable[[], datetime],
+                   sleep: Callable[[float], None]) -> None:
+    """Waits for all open hand-offs together until handoff_until, without the machine lock;
+    the ones still open then expire (failed, card expired)."""
+    if not pending:
+        return
+    deadline = handoff_deadline(now(), cfg.handoff_until)
+    while pending:
+        sleep(cfg.poll_seconds)
+        _poll_handoffs(pending, store, cards, driver, tracker, res, transport, cfg, now)
+        if pending and now() >= deadline:
+            for h in list(pending):
+                pending.remove(h)
+                try:
+                    cards.update(h.cid, status="expired")
+                    _fail(store, h.rec, f"handoff_expired: no answer by {cfg.handoff_until}", res, transport, cfg)
+                finally:
+                    driver.close(h.page)
 
 
 def _dry_seen(dry: JsonlStore, today: str) -> set[str]:
@@ -425,10 +510,11 @@ def _dry_seen(dry: JsonlStore, today: str) -> set[str]:
 def _resolve_offsite(store: JsonlStore, rec: dict, pkg: Package, driver: Driver, lock, gate: _Gate,
                      res: ApplyPassResult, transport, cfg: ApplyConfig, now: Callable[[], datetime],
                      dry: JsonlStore | None) -> dict | str | None:
-    """Зовнішнє посилання linkedin_offsite під локом машини; сторінка закривається на кожному виході.
-    Оновлений запис (тепер form) для подачі в тому самому проході, "stop" без лока або None, коли лід
-    розібрано (held, failed чи платформа вимкнена, а лід лишився queued). sending тут не ставиться.
-    dry (тіньовий прохід): збій браузера йде рядком у queue_dry, запис черги не чіпаємо."""
+    """The external link of a linkedin_offsite lead under the machine lock; the page closes on every exit.
+    Returns the updated record (now form, or linkedin_easy when the page under the login has Easy
+    Apply) to submit in the same pass, "stop" without the lock, or None when the lead is settled
+    (held, failed, or the platform switched off while the lead stays queued). No sending here.
+    dry (shadow pass): a browser failure becomes a line in queue_dry, the queue record is untouched."""
     url = rec.get("apply_url") or pkg.apply_url
     page = None
     error = ""
@@ -456,23 +542,56 @@ def _resolve_offsite(store: JsonlStore, rec: dict, pkg: Package, driver: Driver,
     if state == "closed":
         mark(store, rec["id"], status="held", reasons=["not_live"])
         return None
+    if state == "easy_apply":
+        mark(store, rec["id"], channel=EASY, platform="linkedin", resolved_from=url)
+        _update_lead(pkg, channel=EASY, resolver_note=EASY_NOTE)
+        res.resolved.append(rec["id"])
+        return store.get(rec["id"])
+    note = OFFSITE_NOTE
+    if ext is None and cfg.lookup is not None:
+        lead = pkg.lead or {}
+        posting = cfg.lookup(str(lead.get("company") or rec.get("company") or ""),
+                             str(lead.get("title") or rec.get("title") or ""), str(lead.get("location") or ""))
+        if posting is not None:
+            ext, note = posting.url, LOOKUP_NOTE
     if ext is None:
         mark(store, rec["id"], status="held", reasons=["no_apply_link"])
         return None
     ats = ats_from_url(ext)
     mark(store, rec["id"], channel=FORM, apply_url=ext, ats=ats, platform=None, resolved_from=url)
-    path = Path(pkg.dir) / "lead.json"
-    lead = json.loads(path.read_text(encoding="utf-8"))
-    lead.update(channel=FORM, apply_url=ext, ats=ats, resolver_note=OFFSITE_NOTE)
-    path.write_text(json.dumps(lead, ensure_ascii=False, indent=1), encoding="utf-8")
+    _update_lead(pkg, channel=FORM, apply_url=ext, ats=ats, resolver_note=note)
     res.resolved.append(rec["id"])
     return store.get(rec["id"])
+
+
+def _update_lead(pkg: Package, **fields) -> None:
+    """The package's lead.json follows the queue record after a resolution."""
+    path = Path(pkg.dir) / "lead.json"
+    lead = json.loads(path.read_text(encoding="utf-8"))
+    lead.update(fields)
+    path.write_text(json.dumps(lead, ensure_ascii=False, indent=1), encoding="utf-8")
 
 
 def run_apply(cfg: ApplyConfig, store: JsonlStore, cards: JsonlStore, tracker: Path, state_dir: Path,
               driver: Driver, ctx_for: Callable[[dict, Package], AnswerContext], transport: Transport | None,
               now: Callable[[], datetime], sleep: Callable[[float], None]) -> ApplyPassResult:
+    """One pass over the queue; hand-offs opened by it are awaited at the end, whatever way
+    the queue loop stopped (pause, deadline margin, lock). Their pages close on every exit."""
     res = ApplyPassResult()
+    pending: list[_Handoff] = []
+    try:
+        _run_queue(cfg, store, cards, tracker, state_dir, driver, ctx_for, transport, now, sleep, res, pending)
+        _wait_handoffs(pending, store, cards, driver, tracker, res, transport, cfg, now, sleep)
+    finally:
+        for h in pending:   # only on an exception: the records stay handoff, the next pass expires them
+            driver.close(h.page)
+    return res
+
+
+def _run_queue(cfg: ApplyConfig, store: JsonlStore, cards: JsonlStore, tracker: Path, state_dir: Path,
+               driver: Driver, ctx_for: Callable[[dict, Package], AnswerContext], transport: Transport | None,
+               now: Callable[[], datetime], sleep: Callable[[float], None], res: ApplyPassResult,
+               pending: list[_Handoff]) -> ApplyPassResult:
     if is_paused(state_dir):
         res.paused = True
         return res
@@ -483,6 +602,7 @@ def run_apply(cfg: ApplyConfig, store: JsonlStore, cards: JsonlStore, tracker: P
         # тіньовий прохід теж стоїть: вечірній ранок о 20:30 відкриває той самий профіль
         res.after_deadline = True
         return res
+    _close_decided_cards(store, cards, started.strftime(_FMT))
     _expire_handoffs(store, cards, started, tracker, res, transport, cfg)
     _expire_sending(store, started.strftime(_FMT), res, transport, cfg)
     switch = (effective(cfg.targeting, cfg.platforms_path, started) if cfg.platforms_path is not None
@@ -494,7 +614,9 @@ def run_apply(cfg: ApplyConfig, store: JsonlStore, cards: JsonlStore, tracker: P
     last_start = handoff_deadline(started, cfg.handoff_until) - timedelta(minutes=cfg.deadline_margin_minutes)
     order = {ch: i for i, ch in enumerate(PASS_ORDER)}
     for rec in sorted(due_any(store, CHANNELS), key=lambda r: order[r["channel"]]):
-        if is_paused(state_dir):   # /pause посеред проходу: наступний лід уже не починаємо
+        # an operator's quick answer on an earlier hand-off is recorded before the next lead
+        _poll_handoffs(pending, store, cards, driver, tracker, res, transport, cfg, now)
+        if is_paused(state_dir):   # /pause mid-pass: no new lead; open hand-offs are still awaited
             res.paused = True
             return res
         channel = rec["channel"]
@@ -530,11 +652,17 @@ def run_apply(cfg: ApplyConfig, store: JsonlStore, cards: JsonlStore, tracker: P
                 return res
             if step is None:
                 continue
-            # далі той самий лід як form: ліміт form, глобальний dry_run, без платформи
-            rec, channel, platform = step, FORM, None
+            # the same lead goes on as form (form limit, global dry_run, no platform) or as
+            # linkedin_easy (the linkedin switch and limits)
+            rec, channel = step, step["channel"]
+            platform = None if channel == FORM else "linkedin"
             is_dry = gate.dry(channel, platform)
-            if gate.allow(channel, platform):
-                res.skipped_limit += 1   # лишається queued уже як form
+            why = gate.allow(channel, platform)
+            if why == "off":
+                res.skipped_platform += 1
+                continue
+            if why:
+                res.skipped_limit += 1   # stays queued, already with the new channel
                 continue
             if now() >= last_start:
                 res.after_deadline = True
@@ -614,7 +742,7 @@ def run_apply(cfg: ApplyConfig, store: JsonlStore, cards: JsonlStore, tracker: P
         if result.status == "submitted":
             driver.close(page)
             gate.note(channel, platform)
-            _submitted(store, rec, lead, ats, url, f"{_label(rec)}:{result.confirmation_text}", result.screenshots,
+            _submitted(store, cards, rec, lead, ats, url, f"{_label(rec)}:{result.confirmation_text}", result.screenshots,
                        now().strftime(_FMT), tracker, res, transport, cfg)
             continue
         if result.status == "closed":
@@ -628,14 +756,14 @@ def run_apply(cfg: ApplyConfig, store: JsonlStore, cards: JsonlStore, tracker: P
             continue
         cid = handoff_cid(rec["id"])
         hat = now().strftime(_FMT)
-        cards.append({"id": cid, "kind": "handoff", "status": "open", "lead_id": rec["id"],
+        _open_handoff_card(cards, {"id": cid, "kind": "handoff", "status": "open", "lead_id": rec["id"],
                       "company": lead.get("company") or "", "title": lead.get("title") or "", "url": url,
                       "ats": ats, "platform": platform, "salary": lead.get("stated_rate") or "",
                       "reason": result.reason, "at": hat})
         mark(store, rec["id"], status="handoff", handoff_at=hat, handoff_card=cid, reason=result.reason,
              screenshots=list(result.screenshots))
         res.handoff.append(rec["id"])
-        _wait_handoff(store, cards, rec, lead, ats, url, cid, result.reason, result.screenshots, page, driver,
-                      tracker, res, transport, cfg, now, sleep)
-        return res   # один hand-off на прохід: решта черги чекає наступного таймера
+        h = _Handoff(rec, lead, ats, url, cid, list(result.screenshots), page)
+        if _post_handoff(store, cards, h, result.reason, driver, res, transport, cfg):
+            pending.append(h)   # the tab stays open; the pass goes on and waits for it at the end
     return res

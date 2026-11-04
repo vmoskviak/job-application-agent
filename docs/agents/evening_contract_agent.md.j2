@@ -59,7 +59,7 @@ Skip: `search.yaml → sources.hn_whoishiring.enabled` is off.
 ## Step 2: Portal email alerts ({{ ns.senders|join(', ') if alerts_on else 'not configured' }})
 {% if alerts_on %}
 1. Mailbox `gmail` ({{ gmail.jobs.address }}): `mcp__gmail__search_emails` with the query
-   `label:job-alerts {{ alert_from }} newer_than:2d`, then `mcp__gmail__read_email` for each email. Only read the emails: do not delete, do not archive, do not change labels.
+   `in:anywhere label:job-alerts {{ alert_from }} newer_than:2d` (`maxResults 50`), then `mcp__gmail__read_email` for each email. `in:anywhere` because the mailbox owner sometimes moves alerts to the Trash before this run; read them there, never restore or move them. Only read the emails: do not delete, do not archive, do not change labels.
 2. From the email text extract direct links to project or job pages (the page of a single project, not a list and not a login page). Drop tracking parameters (`utm_*` etc.), remove duplicates.
 3. Write them to `var/run/urls_alerts_YYYY-MM-DD.txt` (one URL per line) and run discover:
 

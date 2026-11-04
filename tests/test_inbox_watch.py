@@ -4,6 +4,8 @@ from __future__ import annotations
 from dataclasses import replace
 from datetime import date
 
+import pytest
+
 from bot.inbox_watch import WatchConfig, run_notify, run_watch, watch_summary
 from bot.state import JsonlStore, SeenSet, set_paused
 from tests.inbox_fixtures import AGENCIES, CONTRACT_TRACKER, MAILS, jordan_profile
@@ -397,3 +399,108 @@ def test_notify_mode_dry_run_has_own_seen_set_and_skips_autoreplies(tmp_path):
     assert ITEM_ID("company_interview_de") not in SeenSet(env.state / "inbox_seen.json")
     res = _notify(env, [ITEM("company_interview_de"), auto])
     assert len(env.t.sent) == 1 and res.system == 1
+
+
+# --- 29.10.2026: no send button where a reply cannot or must not go ---
+
+def _buttons(sent_entry) -> list:
+    return [(b.data, b.url) for row in sent_entry[2] for b in row]
+
+
+def _unknown_from_company(**over) -> dict:
+    return ITEM("stranger_en", **{"from": "Recruiting <jobs@example-co.de>", "company": "Example Co", **over})
+
+
+def test_llm_reclassified_confirmation_gets_no_card(tmp_path):
+    """An auto-ack the keywords missed: the model says confirmed, so nobody answers it."""
+    env = Env(tmp_path, llm=FakeLLM(['{"class": "confirmed", "draft": "Thanks for confirming."}']))
+    r = env.run([_unknown_from_company()])
+    assert env.t.sent == [] and r.carded == [] and len(env.llm.prompts) == 1
+    assert r.tracker_updates == [("Example Co", "confirmed")]
+    assert ITEM_ID("stranger_en") in SeenSet(env.state / "inbox_seen.json")
+
+
+def test_llm_reclassified_rejection_gets_info_card_only(tmp_path):
+    env = Env(tmp_path, llm=FakeLLM(['{"class": "rejected", "draft": "Schade."}']))
+    r = env.run([_unknown_from_company()])
+    assert len(env.t.sent) == 1 and env.t.sent[0][2] == [] and "Rejection" in env.t.sent[0][1]
+    assert r.tracker_updates == [] and "| sent |" in env.text()
+    assert JsonlStore(env.state / "cards.jsonl").read()[0]["status"] == "info"
+
+
+def test_no_reply_sender_gets_info_card_without_llm(tmp_path):
+    env = Env(tmp_path)
+    item = ITEM("company_interview_de", **{"from": "Example Co <noreply_application@example-co.de>"})
+    r = env.run([item])
+    assert env.llm.prompts == [] and r.llm_calls == 0 and len(env.t.sent) == 1
+    gmail = f"https://mail.google.com/mail/u/0/?authuser=jordan@example.com#all/{ITEM_ID('company_interview_de')}"
+    assert _buttons(env.t.sent[0]) == [(None, gmail)]
+    assert "does not accept replies" in env.t.sent[0][1]
+    assert r.tracker_updates == [("Example Co", "interview")]
+    rec = JsonlStore(env.state / "cards.jsonl").read()[0]
+    assert rec["kind"] == "info" and rec["draft"] is None and rec["from"] == item["from"]
+
+
+def test_no_reply_from_with_reply_to_still_gets_a_draft(tmp_path):
+    env = Env(tmp_path)
+    item = ITEM("company_interview_de", **{"from": "Example Co <no-reply@example-co.de>",
+                                           "reply_to": "jobs@example-co.de"})
+    env.run([item])
+    assert len(env.llm.prompts) == 1 and any(d and d.startswith("send:") for d, _ in _buttons(env.t.sent[0]))
+    rec = JsonlStore(env.state / "cards.jsonl").read()[0]
+    assert rec["kind"] == "reply" and rec["reply_to"] == "jobs@example-co.de"
+
+
+def test_marketplace_system_mail_from_donotreply_gets_no_draft(tmp_path):
+    """The membership mail matched INVITE_RE («proposal insights»): no LLM, no send button."""
+    env = Env(tmp_path)
+    item = ITEM("upwork_message_en", **{"from": "Marketplace <donotreply@upwork.com>",
+                                        "subject": "Congrats on upgrading your plan",
+                                        "body": "Your membership is active: more Connects and proposal insights."})
+    r = env.run([item])
+    assert env.llm.prompts == [] and len(env.t.sent) == 1
+    assert all(d is None for d, _ in _buttons(env.t.sent[0])) and r.carded
+
+
+@pytest.mark.parametrize("status", ["withdrew", "skipped"])
+def test_closed_tracker_row_gets_info_card_without_llm(tmp_path, status):
+    closed = CONTRACT_TRACKER.replace("| Example Co | Android Engineer | HN Who is hiring (email) | — | sent |",
+                                      f"| Example Co | Android Engineer | HN Who is hiring (email) | — | {status} |")
+    env = Env(tmp_path, tracker_text=closed)
+    r = env.run([ITEM("company_info_request_de")])
+    assert env.llm.prompts == [] and len(env.t.sent) == 1 and f"closed ({status})" in env.t.sent[0][1]
+    assert all(d is None for d, _ in _buttons(env.t.sent[0])) and r.tracker_updates == []
+
+
+def test_trashed_outreach_gets_no_card_and_no_llm(tmp_path):
+    """The owner binned it; in:anywhere still reads it (29.10.2026: a recruiter's old LinkedIn reply)."""
+    env = Env(tmp_path)
+    r = env.run([ITEM("linkedin_inmail_de", trashed=True)])
+    assert env.t.sent == [] and env.llm.prompts == [] and r.carded == []
+    assert ITEM_ID("linkedin_inmail_de") in SeenSet(env.state / "inbox_seen.json")
+
+
+def test_trashed_interview_still_tells_the_operator(tmp_path):
+    env = Env(tmp_path)
+    r = env.run([ITEM("company_interview_de", trashed=True)])
+    assert env.llm.prompts == [] and len(env.t.sent) == 1 and "Trash" in env.t.sent[0][1]
+    assert all(d is None for d, _ in _buttons(env.t.sent[0]))
+    assert r.tracker_updates == [("Example Co", "interview")]
+
+
+def test_trashed_rejection_updates_tracker_without_card(tmp_path):
+    env = Env(tmp_path)
+    r = env.run([ITEM("ats_rejected_en", trashed=True), ITEM("upwork_message_en", trashed=True)])
+    assert r.tracker_updates == [("Example Co", "rejected")] and env.t.sent == [] and env.llm.prompts == []
+    seen = SeenSet(env.state / "inbox_seen.json")
+    assert ITEM_ID("ats_rejected_en") in seen and ITEM_ID("upwork_message_en") in seen
+
+
+def test_closed_tracker_row_is_not_reopened_by_keywords(tmp_path):
+    """A withdrawn row stays withdrawn: otherwise the next mail in the thread would get a draft."""
+    closed = CONTRACT_TRACKER.replace("| Example Co | Android Engineer | HN Who is hiring (email) | — | sent |",
+                                      "| Example Co | Android Engineer | HN Who is hiring (email) | — | withdrew |")
+    env = Env(tmp_path, tracker_text=closed)
+    r = env.run([ITEM("company_interview_de")])
+    assert r.tracker_updates == [] and "| withdrew |" in env.text() and env.llm.prompts == []
+    assert len(env.t.sent) == 1 and "closed (withdrew)" in env.t.sent[0][1]

@@ -132,6 +132,10 @@ def _item(account: str, mid: str, companies: list[str]) -> dict | None:
         "account": account,
         "date": hdr.get("Date", "")[:31],
         "from": frm,
+        # the address a reply goes to (gmail_rest reply: Reply-To, then From)
+        "reply_to": hdr.get("Reply-To", ""),
+        # read in:anywhere: a mail the owner binned is still seen, but nobody answers it
+        "trashed": "TRASH" in (msg.get("labelIds") or []),
         "subject": subject,
         "classification": classification,
         "body": body[:3000],   # inbox watcher: чернетка відповіді пишеться по тексту листа

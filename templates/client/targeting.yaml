@@ -26,6 +26,9 @@ locations: []
 # any: any mention of remote/Homeoffice/hybrid rescues a foreign city.
 # full: only fully remote work (search in one city because of the commute).
 remote_policy: any
+# Contract market: true = a posting without a contract/freelance/B2B signal stays only when it is
+# fully remote (an employment role that a freelancer can still pitch B2B to).
+non_contract_remote_only: false
 # Contract market, phase 2b: files from attachments/ that German agencies
 # receive on top of the CV (Projektliste). Empty = CV only.
 # agency_attachments: []
@@ -33,3 +36,23 @@ remote_policy: any
 # daily_limits = how many submissions per day per channel (default email 5, form 5).
 # send_policy: auto
 # daily_limits: {email: 5, form: 5}
+# LinkedIn Easy Apply through the browser worker (both markets): shadow first (fill, no Submit),
+# then on. A platform switched on needs its daily limit, otherwise its leads are held
+# (platform_limit_zero). Employment market example:
+# platforms: {linkedin: shadow}
+# daily_limits: {form: 8, linkedin: 5}
+# Contract market, stage 2e: Upwork job-alert mails become proposal drafts on Telegram cards.
+# The server never opens Upwork; every proposal is submitted by hand, then "Submitted" on the card
+# writes the tracker row. Needs search.yaml -> sources.upwork_alerts:
+#   {enabled: false, channel: email, sender: upwork@t.upwork.com}  (keep enabled false: no queue leads)
+# and, with Freelancer Plus, sources.upwork_plus_alerts:
+#   {enabled: false, channel: email, sender: donotreply@upwork.com, shared_sender: true, upwork: true}
+upwork:
+  intake: false                   # true = cards in Telegram; shadow = the pass writes var/state/cards_dry.jsonl only
+  require_payment_verified: true  # skip clients without "Payment verified" in the alert
+  min_fixed_usd: 500              # fixed-price budget below this = no card (an unknown amount passes)
+  min_hourly_usd: 50              # the top of the client's hourly range must reach this (unknown passes)
+  max_cards_per_day: 6            # later fit jobs that day are recorded as skipped
+  max_cards_per_pass: 3           # the rest waits for the next hourly pass
+  bid_hourly_usd: 120             # suggested bid on hourly jobs; fixed-price jobs: the client's budget
+  max_llm_per_pass: 4             # claude -p drafts per pass, corrective retries included

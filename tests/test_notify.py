@@ -84,3 +84,23 @@ def test_notify_card_has_excerpt_and_gmail_button():
     assert card.text.startswith("<b>Example Co</b> · Співбесіда")
     assert "Wir laden Sie ein. &lt;b&gt;Termin&lt;/b&gt; 17:30." in card.text
     assert card.buttons == [[card.buttons[0][0]]] and card.buttons[0][0].url == "https://mail.google.com/x"
+
+
+def test_rows_at_reads_tracker_of_client_in_repo_subdir(tmp_path):
+    """The client folder sits inside the data repo (clients/<slug>/). `git show sha:tracker.md`
+    resolves against the repo root and failed, so every run saw an empty "before" and re-sent
+    every old interview to Telegram (Oct 28 – Nov 3, 2026)."""
+    import subprocess
+    from scripts.server import notify_run
+
+    client_dir = tmp_path / "clients" / "demo"
+    client_dir.mkdir(parents=True)
+    (client_dir / "tracker.md").write_text(TRACKER_BEFORE, encoding="utf-8")
+    git = ["git", "-C", str(tmp_path), "-c", "user.name=t", "-c", "user.email=t@example.com"]
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    subprocess.run(git + ["add", "."], check=True)
+    subprocess.run(git + ["commit", "-qm", "init"], check=True)
+
+    rows = notify_run.rows_at(client_dir, "HEAD")
+    assert [r.company for r in rows] == ["Alpha GmbH", "Beta AG", "Gamma SE"]
+    assert notify_run.rows_at(client_dir, "0" * 40) is None

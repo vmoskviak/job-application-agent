@@ -155,6 +155,28 @@ def resolve_urls(urls: list[str]) -> tuple[list[str], list[str]]:
     return list(dict.fromkeys(resolved)), failed
 
 
+_LINKEDIN_VIEW_RE = re.compile(r"/(?:comm/)?jobs/view/(?:[^/?#]*-)?(\d+)/?$")
+
+
+def linkedin_job_url(url: str) -> Optional[str]:
+    """Canonical https://www.linkedin.com/jobs/view/<id> of a LinkedIn posting link, None otherwise.
+
+    One posting comes in three spellings: alert mails link /comm/jobs/view/<id>/?trackingId=…,
+    the search returns de.linkedin.com/jobs/view/<slug>-<id>, a results page carries
+    ?currentJobId=<id>. The /comm/ form also misses the guest-page fetch (bot.scrapers.fetch),
+    so discover needed the logged-in browser for a page plain HTTP returns in full, and the
+    enqueue resolver could not tell Easy Apply from an external Apply. One spelling also
+    gives one seen key and one tracker URL per posting.
+    """
+    parts = urlsplit(url.strip())
+    host = (parts.hostname or "").lower()
+    if host != "linkedin.com" and not host.endswith(".linkedin.com"):
+        return None
+    m = _LINKEDIN_VIEW_RE.search(parts.path)
+    job_id = m.group(1) if m else (parse_qs(parts.query).get("currentJobId") or [""])[0]
+    return f"https://www.linkedin.com/jobs/view/{job_id}" if job_id.isdigit() else None
+
+
 def extract_urls(text: str) -> list[str]:
     """Extract job URLs from raw email/text content."""
     return list(dict.fromkeys(_URL_RE.findall(text)))
@@ -423,6 +445,8 @@ def main(urls_file: Path, use_playwright: bool = True,
         if not urls:
             print("[discover] urls.txt є порожнім", file=sys.stderr)
             return
+        # One spelling per LinkedIn posting before the seen state and the intake (linkedin_job_url).
+        urls = list(dict.fromkeys(linkedin_job_url(u) or u for u in urls))
 
         skipped: list[str] = []
         if seen_state is not None:

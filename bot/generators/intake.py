@@ -11,7 +11,7 @@ from bs4 import BeautifulSoup
 
 from bot.textclean import strip_invisible
 from bot.job_title import (
-    company_from_text, first_h1, is_junk_title, recover_title,
+    company_from_text, first_h1, is_junk_title, recover_title, split_page_title,
 )
 
 if TYPE_CHECKING:
@@ -80,27 +80,13 @@ def detect_portal(text: str) -> Optional[str]:
 _MD_LINK_RE = re.compile(r"\[([^\]]+)\]\([^)]*\)")
 
 
-# Заголовки сторінок регіональних Stellenmärkte: «<Роль> - <Firma> | RP Stellenmarkt»
-# (jobs.rp-online.de, 08.10.2026: роль і фірма злипались в одне поле, company
-# ставав копією title). Суфікс порталу відрізаємо, фірму з тире виймаємо.
-_PORTAL_SUFFIX_RE = re.compile(
-    r"\s*\|\s*(?:RP\s+Stellenmarkt|Stellenmarkt[^|]*|Jobs?\s*(?:bei|auf)?\s*[^|]*|Karriere[^|]*)\s*$",
-    re.IGNORECASE,
-)
-_TITLE_COMPANY_RE = re.compile(r"^(?P<title>.+?)\s+[-–]\s+(?P<company>[^-–|]{3,}?)\s*$")
+def _same_text(a: str, b: str) -> bool:
+    return " ".join(a.split()).lower() == " ".join(b.split()).lower()
 
 
 def split_portal_title(raw: str) -> tuple[str, str | None]:
-    """(«Teamassistenz Personalwesen (m/w/d) Vollzeit / Teilzeit», «Musterland Kultur GmbH»)
-    з «Teamassistenz Personalwesen (m/w/d) Vollzeit / Teilzeit - Musterland Kultur GmbH | RP Stellenmarkt».
-    Без суфікса порталу нічого не чіпає: тире всередині назв ролей звичне."""
-    stripped = _PORTAL_SUFFIX_RE.sub("", raw).strip()
-    if stripped == raw.strip():
-        return raw.strip(), None
-    m = _TITLE_COMPANY_RE.match(stripped)
-    if not m:
-        return stripped, None
-    return m.group("title").strip(), m.group("company").strip()
+    """Old name of bot.job_title.split_page_title (regional Stellenmärkte, 08.10.2026)."""
+    return split_page_title(raw)
 
 
 def parse_text(text: str, source_url: str = "") -> JobData:
@@ -135,8 +121,10 @@ def parse_text(text: str, source_url: str = "") -> JobData:
         ) and not location:
             location = stripped
 
-    title, company_from_title = split_portal_title(title)
-    if company_from_title and (not company or company == title or len(company) > 80):
+    raw_title = title
+    title, company_from_title = split_page_title(title)
+    # The legal-form heuristic above often takes the title line itself («… bei der X GmbH (m/w/d)»).
+    if company_from_title and (not company or _same_text(company, raw_title) or len(company) > 80):
         company = company_from_title
     if location and (location == title or len(location) > 80):
         location = ""  # у RP-Stellenmarkt перший рядок із «Köln» був самим заголовком

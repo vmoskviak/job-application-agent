@@ -26,6 +26,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+from bot.scrapers.browser import HEADED_LAUNCH
 from bot.scrapers.profile import PROFILE_DIR
 
 from playwright.sync_api import sync_playwright
@@ -86,10 +87,8 @@ def main() -> int:
     ctx = p.chromium.launch_persistent_context(
         user_data_dir=str(PROFILE_DIR),
         headless=False,
-        viewport={"width": 1280, "height": 900},
         locale="de-DE",
-        # без цього деякі сайти (LinkedIn) бачать автоматизацію ще до логіну
-        args=["--disable-blink-features=AutomationControlled"],
+        **HEADED_LAUNCH,   # window as large as the server display, no automation flag
     )
     page = ctx.new_page()
     page.goto(args.url)

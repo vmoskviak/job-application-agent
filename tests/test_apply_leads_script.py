@@ -125,6 +125,22 @@ def test_ctx_for_without_attachments_raises(client, pkg_with_two_attachments):
         ctx_for(client, {}, pkg)
 
 
+def test_ctx_for_employment_linkedin_package_gives_cv_letter_and_market(tmp_path):
+    """Easy Apply for the employment market: the modal uploads ctx.resume (the package's CV, never the
+    Anschreiben or a Zeugnis), the German letter is the note and the cover-letter file, answers follow
+    the employment market (annual salary, German dates)."""
+    c = dataclasses.replace(_client.load("erika", base=EX), root=tmp_path / "erika")
+    send = tmp_path / "pkg" / "to_send"
+    pkg = Package("linkedco-teamassistenz", tmp_path / "pkg", {"company": "LinkedCo", "title": "Teamassistenz"},
+                  "linkedin_easy", "https://www.linkedin.com/jobs/view/4312345678", None, "de", "",
+                  "Sehr geehrte Damen und Herren, ich bewerbe mich.",
+                  [send / "Erika_Mustermann_CV.pdf", send / "01_Anschreiben.pdf",
+                   tmp_path / "attachments" / "01_Zeugnis_BeispielLogistik_2025.pdf"])
+    ctx = ctx_for(c, {}, pkg)
+    assert ctx.resume.name == "Erika_Mustermann_CV.pdf" and ctx.cover_letter.name == "01_Anschreiben.pdf"
+    assert ctx.market == "de_employment" and ctx.lang == "de" and ctx.note.startswith("Sehr geehrte")
+
+
 class _FakeDriver:
     """Замість PlaywrightDriver: фіксує, чи брали профіль і чи гасили браузер."""
 
@@ -367,6 +383,34 @@ def test_driver_resolve_offsite_and_probe_pick_linkedin(monkeypatch, driver_call
     assert d.resolve_offsite(_Page(), "https://www.linkedin.com/jobs/view/1/") == ("resolved", "https://ext/1")
     assert d.probe_submitted(_Page("https://www.linkedin.com/jobs/view/1/")) == "application was sent"
     assert d.probe_submitted(_Page("https://jobs.ashbyhq.com/acme/1")) == ""   # ATS-проба впала: чекаємо далі
+
+
+def _probe(text: str, submit_visible: bool):
+    from bot.apply.ats_detect import PageProbe
+
+    return PageProbe(text=text, html="", submit_visible=submit_visible, challenge_visible=False, invalid_count=0)
+
+
+def test_driver_probe_accepts_a_completed_phrase_next_to_a_job_page_apply_button(monkeypatch, driver_calls):
+    # 02.11.2026: after the form the career page still showed «Jetzt bewerben», the hand-off waited until 19:55
+    _, d, _, _ = driver_calls
+    page = _Page("https://jobs.example.com/stelle/1")
+    monkeypatch.setattr("bot.apply.ats_form.probe",
+                        lambda p: _probe("Deine Bewerbung wurde erfolgreich gespeichert. Jetzt bewerben", True))
+    assert d.probe_submitted(page) == "bewerbung wurde erfolgreich"
+    monkeypatch.setattr("bot.apply.ats_form.probe",
+                        lambda p: _probe("Die Bewerbung ist bei uns erfolgreich eingegangen!", False))
+    assert d.probe_submitted(page) == "erfolgreich eingegangen"
+    monkeypatch.setattr("bot.apply.ats_form.probe",
+                        lambda p: _probe("Vielen Dank für deine Bewerbung, sie ist erfolgreich eingegangen. Jetzt bewerben", True))
+    assert d.probe_submitted(page) == "erfolgreich eingegangen"
+
+
+def test_driver_probe_ignores_a_generic_thanks_while_the_submit_button_is_there(monkeypatch, driver_calls):
+    _, d, _, _ = driver_calls
+    monkeypatch.setattr("bot.apply.ats_form.probe",
+                        lambda p: _probe("Vielen Dank für Ihre Bewerbung bei uns! Bewerbung absenden", True))
+    assert d.probe_submitted(_Page("https://jobs.example.com/stelle/1")) == ""
 
 
 def test_build_config_carries_targeting_and_platforms_path(client):

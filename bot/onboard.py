@@ -101,6 +101,14 @@ def check(c: _client.Client) -> tuple[list[str], list[str]]:
                         f"cv.yaml: experience[{i}] буліт не рядок: {b!r} "
                         "(двокрапка без лапок?)")
     skills = cv.get("skills") or {}
+    for v, rows in skills.items():
+        for row in rows or []:
+            # A comma inside an unquoted YAML flow list splits the value:
+            # [Sprachen, Französisch (verhandlungssicher, C1)] loses the end.
+            if not (isinstance(row, (list, tuple)) and len(row) == 2):
+                errors.append(
+                    f"cv.yaml: skills.{v} row must be [heading, value], got {row!r} "
+                    "(a comma in the value needs quotes)")
     for v in ([] if external else variants):
         if v not in skills:
             (errors if v == default else warnings).append(

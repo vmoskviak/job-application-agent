@@ -189,3 +189,81 @@ def test_done_takes_platform_from_card_first(tmp_path):
     assert d.apply(Action("t", "done", "handoff-l2", 1)) == "OK done"
     assert queue.get("l2")["sent_id"] == "gulp:operator"
     assert "| contract: gulp |" in tracker.read_text(encoding="utf-8")
+
+
+def test_send_to_no_reply_sender_is_refused(tmp_path):
+    """Defense in depth for cards posted before the watcher learned no-reply senders (29.10.2026)."""
+    cards, _tracker, d = _disp(tmp_path)
+    cards.append({"id": "re-3", "kind": "reply", "status": "open", "account": "main", "message_id": "m3",
+                  "company": None, "draft": "Hi", "from": "Marketplace <donotreply@marketplace.example>"})
+    assert d.apply(Action("t", "send", "re-3", 42)) == "ERR no-reply sender, reply in the portal or Gmail"
+    assert cards.get("re-3")["status"] == "open" and d.sender.calls == []
+
+
+def test_send_follows_reply_to_over_no_reply_from(tmp_path):
+    cards, _tracker, d = _disp(tmp_path)
+    cards.append({"id": "re-4", "kind": "reply", "status": "open", "account": "main", "message_id": "m4",
+                  "company": None, "draft": "Hi", "from": "Board <messages-noreply@board.example>",
+                  "reply_to": "thread-77@reply.board.example"})
+    assert d.apply(Action("t", "send", "re-4", 42)) == "OK sent fake-id-1"
+
+
+# ── Upwork proposal cards (stage 2e) ─────────────────────────────────────────
+
+UP = "up-19a0000000000001"
+
+
+def _upwork_disp(tmp_path, country="PRT"):
+    cards = JsonlStore(tmp_path / "cards.jsonl")
+    cards.append({"id": UP, "kind": "upwork", "status": "open", "account": "main", "message_id": "19a0000000000001",
+                  "title": "Example Fitness Companion App", "country": country, "alert_date": "2026-10-29",
+                  "saved_search": "android kotlin", "budget": "fixed $2,000", "fit": "high",
+                  "draft": "Your app needs a sync layer.\n\nBest regards,\nJordan", "created": "2026-10-29"})
+    tracker = tmp_path / "tracker.md"
+    tracker.write_text(JORDAN_TRACKER_WITH_TWO_ROWS, encoding="utf-8")
+    d = Dispatcher(FakeSender(), cards, tracker, tmp_path, lambda: "2026-10-29", source_label="contract",
+                   followup_days=7)
+    return cards, tracker, d
+
+
+def _upwork_rows(tracker: Path) -> list[str]:
+    return [ln for ln in tracker.read_text(encoding="utf-8").splitlines() if "Upwork client" in ln]
+
+
+def test_upwork_submitted_closes_the_card_and_writes_one_tracker_row(tmp_path):
+    cards, tracker, d = _upwork_disp(tmp_path)
+    assert d.apply(Action("t", "done", UP, 42)) == "OK done"
+    assert cards.get(UP)["status"] == "done" and cards.get(UP)["closed_at"] == "2026-10-29"
+    row = ("| 4 | 2026-10-29 | Upwork client (PRT) | Example Fitness Companion App | contract: upwork |  "
+           "| portal_submitted (портал) | 2026-10-29 | wait reply until 2026-11-05 "
+           "| Upwork alert 2026-10-29; saved search: android kotlin; budget fixed $2,000; submitted by the operator |")
+    assert _upwork_rows(tracker) == [row]
+    assert d.apply(Action("t", "done", UP, 42)) == "OK already done"
+    assert len(_upwork_rows(tracker)) == 1 and d.sender.calls == []
+
+
+def test_upwork_row_without_country(tmp_path):
+    _cards, tracker, d = _upwork_disp(tmp_path, country="")
+    d.apply(Action("t", "done", UP, 42))
+    assert "| Upwork client | Example Fitness Companion App |" in _upwork_rows(tracker)[0]
+
+
+def test_upwork_tracker_error_still_closes_the_card(tmp_path):
+    cards, tracker, d = _upwork_disp(tmp_path)
+    tracker.unlink()
+    assert d.apply(Action("t", "done", UP, 42)).startswith("OK done, tracker error:")
+    assert cards.get(UP)["status"] == "done"
+
+
+def test_upwork_skip_writes_nothing(tmp_path):
+    cards, tracker, d = _upwork_disp(tmp_path)
+    assert d.apply(Action("t", "skip", UP, 42)) == "OK skipped"
+    assert cards.get(UP)["status"] == "skipped" and _upwork_rows(tracker) == []
+
+
+def test_upwork_send_is_refused_even_when_paused(tmp_path):
+    cards, _tracker, d = _upwork_disp(tmp_path)
+    assert d.apply(Action("t", "send", UP, 42)).startswith("ERR an Upwork proposal is submitted on Upwork")
+    set_paused(tmp_path, True)
+    assert d.apply(Action("t", "send", UP, 42)).startswith("ERR an Upwork proposal is submitted on Upwork")
+    assert cards.get(UP)["status"] == "open" and d.sender.calls == []

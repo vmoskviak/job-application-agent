@@ -5,6 +5,7 @@ from bot.apply.ats_fields import (
     FIELD_JS,
     FIELD_SELECTOR,
     Field,
+    accepts_file,
     classify,
     fields_from,
     visible_required,
@@ -101,9 +102,9 @@ def test_combobox_flag():
 def test_field_js_group_and_visibility_rules():
     """Фінальне рев'ю, C3/I5/M2: група з aria-labelledby і aria-required контейнера, label[for=name]
     і label[for=data-field-path] для Ashby, aria-hidden не видиме."""
-    assert 'byIds(rg.getAttribute("aria-labelledby"))' in FIELD_JS
+    assert 'byIds(rg.getAttribute("aria-labelledby"), rg)' in FIELD_JS
     assert 'rg.getAttribute("aria-required") === "true"' in FIELD_JS
-    assert 'labelFor(el.name)' in FIELD_JS and 'data-field-path' in FIELD_JS
+    assert 'labelFor(el.name, el)' in FIELD_JS and 'data-field-path' in FIELD_JS
     assert 'el.getAttribute("aria-hidden") !== "true"' in FIELD_JS
     assert 'button[data-option]' in FIELD_JS
 
@@ -178,7 +179,141 @@ def test_years_phrase_in_textarea_stays_free_text():
     assert classify(f) == "free_text"
 
 
+def test_generic_message_textarea_takes_the_cover_note():
+    """A contact-style form with one «Nachricht» box (30.10.2026): it is the cover-letter slot, so the
+    already written note goes there instead of a model call on a question that is not a question."""
+    for label in ("Nachricht", "Ihre Nachricht", "Nachricht an uns *", "Mitteilung", "Anmerkung", "Anmerkungen",
+                  "Bemerkung", "Bemerkungen", "Kommentar", "Message", "Your message", "Comments", "Comment"):
+        assert classify(_f(tag="textarea", type="textarea", label=label)) == "cover_letter_text", label
+    assert classify(_f(tag="textarea", type="textarea", label="", name="message")) == "cover_letter_text"
+    # Only a textarea: a one-line input named like that is not the cover letter.
+    assert classify(_f(label="Nachricht")) != "cover_letter_text"
+    # «Messaging» or «commentary» inside other words do not count.
+    assert classify(_f(tag="textarea", type="textarea", label="Describe your messaging architecture")) == "free_text"
+
+
 def test_years_not_for_combobox_or_select():
     q = "How many years of work experience do you have with Kotlin?"
     assert classify(_f(label=q, combobox=True)) != "years"
     assert classify(_f(label=q, tag="select", type="select")) != "years"
+
+
+def test_consent_radio_with_a_yes_option_is_ack():
+    """LinkedIn/JOIN 29.10.2026: «Stimmst du den AGBs von JOIN zu …? ◯ Ja» is a required consent asked as
+    one radio; it is acknowledged like a consent checkbox. A No option or a skill question is not."""
+    q = "Stimmst du den AGBs von JOIN zu und hast die Datenschutzbestimmungen zur Kenntnis genommen?"
+    assert classify(_f(type="radio", label=f"Ja {q}")) == "ack"
+    assert classify(_f(type="radio", label=f"Nein {q}")) == "choice"
+    assert classify(_f(type="radio", label="Yes", group="Do you have experience with privacy engineering?")) == "choice"
+    assert classify(_f(type="radio", label="Yes", group="I agree to the privacy policy")) == "ack"
+
+
+def test_startdatum_is_a_date():
+    assert classify(_f(label="Wann wäre Ihr frühestmögliches Startdatum? *")) == "date"
+
+
+# ---- German file fields: a generic documents upload, a photo upload
+
+def test_generic_documents_labels_are_documents():
+    for label in ("Anlagen", "Unterlagen", "Bewerbungsunterlagen", "Dokumente", "Dateien", "Anhänge",
+                  "Weitere Unterlagen", "Datei auswählen", "Dokument hochladen", "Attachments", "Documents"):
+        assert classify(_f(type="file", label=label)) == "documents", label
+    assert classify(_f(type="file", label="Bewerbungsunterlagen", required=True)) == "documents"
+    assert classify(_f(type="file", name="attachments[]")) == "documents"
+
+
+def test_specific_file_labels_win_over_the_documents_words():
+    assert classify(_f(type="file", label="Lebenslauf (Datei)")) == "resume"
+    assert classify(_f(type="file", label="Bewerbungsunterlagen (Lebenslauf, Anschreiben, Zeugnisse)")) == "resume"
+    assert classify(_f(type="file", label="Anschreiben als Datei")) == "cover_letter_file"
+    # Certificates are no place for the CV: the old rule stays.
+    assert classify(_f(type="file", label="Zeugnisse (PDF-Datei)")) == "cover_letter_file"
+    assert classify(_f(type="file", label="Zertifikate und Nachweise")) == "cover_letter_file"
+
+
+def test_photo_upload_is_a_photo():
+    for label in ("Bewerbungsfoto", "Foto (optional)", "Profile photo", "Lichtbild"):
+        assert classify(_f(type="file", label=label)) == "photo", label
+    assert classify(_f(type="file", label="Datei", accept="image/*")) == "photo"
+    assert classify(_f(type="file", accept=".jpg,.jpeg, .png")) == "photo"
+    assert classify(_f(type="file", label="Datei", accept=".pdf,image/*")) == "documents"
+    # An input that takes images only can never hold the CV, whatever its label says.
+    assert classify(_f(type="file", label="Lebenslauf", accept="image/*")) == "photo"
+
+
+def test_avatar_upload_is_a_photo():
+    """SmartRecruiters 30.10.2026: the CV went into the avatar input, whose accepted types listed .jfif."""
+    sr_accept = ".BMP,.GIF,.JFIF,.JPEG,.JPG,.PNG,.TIF,.TIFF,.WEBP"
+    assert classify(_f(type="file", accept=sr_accept)) == "photo"
+    assert classify(_f(type="file", accept=sr_accept, required=True)) == "photo"
+    for label in ("Avatar", "Profile picture", "Profilbild", "Profilfoto", "Bild hochladen", "Headshot"):
+        assert classify(_f(type="file", label=label)) == "photo", label
+    # The input's own id says avatar: a «Resume» label borrowed from a container does not make it the CV field.
+    assert classify(_f(type="file", label="Resume", id="avatar-upload")) == "photo"
+    # A visible CV label beats a photo word elsewhere in the text; «Bildung» is not «Bild».
+    assert classify(_f(type="file", label="Lebenslauf", group="Foto und Unterlagen")) == "resume"
+    assert classify(_f(type="file", label="Weiterbildung")) != "photo"
+    assert classify(_f(type="file", label="Resume", accept=".pdf,.doc,.docx")) == "resume"
+
+
+def test_accepts_file():
+    assert accepts_file("", "/x/CV.pdf")
+    assert accepts_file(".pdf,.doc,.docx", "/x/CV.pdf")
+    assert accepts_file(".PDF", "/x/cv.pdf")
+    assert accepts_file("application/pdf", "/x/CV.pdf")
+    assert accepts_file("application/*", "/x/CV.pdf")
+    assert accepts_file("*/*", "/x/CV.pdf")
+    assert accepts_file("pdf, doc", "/x/CV.pdf")   # sloppy markup without dots
+    assert not accepts_file(".BMP,.GIF,.JFIF,.JPEG,.JPG,.PNG,.TIF,.TIFF,.WEBP", "/x/CV.pdf")
+    assert not accepts_file("image/*", "/x/CV.pdf")
+    assert not accepts_file(".doc,.docx", "/x/CV.pdf")
+    assert accepts_file("image/*", "/x/photo.jpg")
+
+
+def test_unlabelled_file_input_is_still_unknown():
+    assert classify(_f(type="file")) == "unknown"
+
+
+def test_fields_from_reads_multiple_accept_and_the_ashby_autofill_mark():
+    f = fields_from([{"i": 0, "tag": "input", "type": "file", "multiple": True, "accept": ".pdf",
+                      "ashby_autofill": True}])[0]
+    assert f.multiple and f.accept == ".pdf" and f.ashby_autofill
+    f = fields_from([{"i": 0, "tag": "input", "type": "file"}])[0]
+    assert not f.multiple and f.accept == "" and not f.ashby_autofill
+    assert "el.multiple" in FIELD_JS and 'getAttribute("accept")' in FIELD_JS
+    assert "ashby-application-form-autofill" in FIELD_JS
+
+
+def _raw(**kw):
+    base = {"i": 0, "tag": "input", "type": "radio", "name": "q", "id": "", "required": False, "label": "Ja",
+            "placeholder": "", "visible": True, "value": "", "options": None, "group": ""}
+    return {**base, **kw}
+
+
+def test_required_marked_only_by_text_counts():
+    """onlyfy (02.11.2026): «Arbeiten Sie aktuell bei der Musterklinik? *» had no required attribute;
+    the worker submitted without an answer and onlyfy came back with an empty form."""
+    from bot.apply.ats_fields import fields_from
+
+    marked = [_raw(group="Arbeiten Sie aktuell bei der Musterklinik? *"),
+              _raw(group="Do you currently work at Example Hospital? required"),
+              _raw(type="text", label="Vorname *", group=""),
+              _raw(type="checkbox", label="Ich stimme der Datenschutzerklärung zu. Pflichtfeld")]
+    assert [f.required for f in fields_from(marked)] == [True, True, True, True]
+    plain = [_raw(group="Möchten Sie in den Talentpool?"), _raw(type="text", label="Titel", group=""),
+             _raw(type="text", label="Required skills for the role", group="")]
+    assert [f.required for f in fields_from(plain)] == [False, False, False]
+
+
+def test_house_number_is_its_own_kind():
+    from bot.apply.ats_answers import split_street
+    from bot.apply.ats_fields import fields_from
+
+    hn, combined, street = fields_from([_raw(type="text", label="Hausnummer*"),
+                                        _raw(type="text", label="Straße und Hausnummer"),
+                                        _raw(type="text", label="Strasse*")])
+    assert (classify(hn), classify(combined), classify(street)) == ("house_number", "street", "street")
+    assert split_street("Musterstraße 1") == ("Musterstraße", "1")
+    assert split_street("Am Ring 12a") == ("Am Ring", "12a")
+    assert split_street("Hauptstr. 5-7") == ("Hauptstr.", "5-7")
+    assert split_street("Musterweg") == ("Musterweg", "")

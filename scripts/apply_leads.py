@@ -79,6 +79,13 @@ def _handoff_until() -> str:
     return HANDOFF_DEFAULT
 
 
+def _lookup():
+    """The employer lookup when the machine has a Perplexity key, else None (leads stay held)."""
+    from bot.apply.employer_lookup import KEY_ENV, find_posting
+
+    return find_posting if os.environ.get(KEY_ENV) else None
+
+
 def build_config(c: _client.Client, args: argparse.Namespace) -> ApplyConfig:
     dry = bool(args.dry_run) or str(os.environ.get(DRY_RUN_ENV, "")).strip().lower() in ("1", "true", "yes")
     policy = str(c.targeting.get("send_policy") or "").strip().lower()
@@ -94,7 +101,8 @@ def build_config(c: _client.Client, args: argparse.Namespace) -> ApplyConfig:
                        source_label="contract" if c.market == "contract" else "portal",
                        followup_days=int(c.targeting.get("followup_days") or 7),
                        targeting=c.targeting, platforms_path=state_dir(c.var) / STATE_FILE,
-                       market=c.market, handoff_buttons=c.telegram["mode"] == "cards")
+                       market=c.market, handoff_buttons=c.telegram["mode"] == "cards",
+                       lookup=_lookup())
 
 
 def ctx_for(c: _client.Client, rec: dict, pkg: Package) -> AnswerContext:
@@ -109,7 +117,9 @@ def ctx_for(c: _client.Client, rec: dict, pkg: Package) -> AnswerContext:
     letter = next((p for p, n in names if "anschreiben" in n or "cover" in n), None)
     return AnswerContext(profile=c.profile, lead=pkg.lead, note=pkg.note, resume=Path(cv),
                          today=_now().date(), lang=pkg.lang, attachments=[Path(p) for p in pkg.attachments],
-                         market=c.market, cover_letter=Path(letter) if letter else None)
+                         market=c.market, cover_letter=Path(letter) if letter else None,
+                         own_emails=tuple(str(a.get("address") or "") for a in
+                                          (c.accounts.get("gmail") or {}).values() if isinstance(a, dict)))
 
 
 class PlaywrightDriver:
@@ -165,6 +175,10 @@ class PlaywrightDriver:
                 from bot.apply import freelancermap
 
                 return freelancermap.apply(page, url, ctx.note, ctx.attachments, shots, dry_run)
+            if platform == "freelance_de":
+                from bot.apply import freelance_de
+
+                return freelance_de.apply(page, url, ctx.note, shots, dry_run)
             if platform == "gulp":
                 from bot.apply import gulp
 
@@ -195,7 +209,8 @@ class PlaywrightDriver:
             return True
 
     def probe_submitted(self, page) -> str:
-        """Фраза підтвердження, коли кнопки Submit уже не видно; "" інакше або якщо вкладку закрили.
+        """Фраза підтвердження, коли кнопки Submit уже не видно (фраза з COMPLETED_PATTERNS і при
+        видимій кнопці); "" інакше або якщо вкладку закрили.
         На linkedin.com своя проба (діалог Easy Apply), деінде проба ATS-форми."""
         from bot.apply.ats_detect import confirmation_in
         from bot.apply.ats_form import probe
@@ -208,7 +223,12 @@ class PlaywrightDriver:
             p = probe(page)
         except Exception:  # noqa: BLE001 — оператор закрив вкладку чи сторінка навігує: чекаємо далі
             return ""
-        return "" if p.submit_visible else confirmation_in(p.text)
+        from bot.apply.forms import COMPLETED_PATTERNS
+
+        if not p.submit_visible:
+            return confirmation_in(p.text)
+        low = (p.text or "").lower()
+        return next((s for s in COMPLETED_PATTERNS if s in low), "")
 
     def close(self, page) -> None:
         with contextlib.suppress(Exception):

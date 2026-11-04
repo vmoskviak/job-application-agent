@@ -180,3 +180,38 @@ def test_generic_value_label_needs_group_question():
     assert is_generic_label("value *") and is_generic_label("") and is_generic_label("Wert")
     assert is_generic_label("question-7f3a-value value *")
     assert not is_generic_label("gehaltsvorstellung value")
+
+
+class ExternalPostingPage(FakePage):
+    """An external posting: the employer URL sits in the posting HTML (escaped JSON) until the apply
+    click, then StepStone shows the «Hat es geklappt?» interstitial without it (seen live 30.10.2026)."""
+
+    POSTING = ('<script>{"applyUrl":"https:\\/\\/karriere.example.org\\/de\\/jobposting\\/'
+               'abc123\\/apply"}</script>')
+
+    def __init__(self):
+        super().__init__()
+        self.clicked = False
+
+    def locator(self, sel):
+        page = self
+
+        class _Loc(FakeLocator):
+            def click(self, timeout=None):
+                page.clicked = True
+
+        return _Loc(self, sel)
+
+    def content(self):
+        return "<html>Hat es geklappt?</html>" if self.clicked else self.POSTING
+
+    def inner_text(self, sel):
+        return "Hat es geklappt?" if self.clicked else ""
+
+
+def test_external_posting_keeps_employer_url_read_before_the_click(monkeypatch, tmp_path):
+    _patch_flow(monkeypatch, [])
+    monkeypatch.setattr(stepstone, "shows_already_applied", lambda page: False)
+    res = stepstone.apply(ExternalPostingPage(), URL, tmp_path, [], dry_run=True)
+    assert res.status == "form_unsupported"
+    assert res.employer_url == "https://karriere.example.org/de/jobposting/abc123/apply"

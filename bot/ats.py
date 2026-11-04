@@ -376,6 +376,31 @@ def _host(url: str) -> str:
     return urlparse(url or "").netloc.lower()
 
 
+# Boards whose posting page names the employer's apply URL (employment market), with the
+# minimum score of `job_boards.employer_apply_url`. StepStone keeps the employer's apply link in
+# the page JSON; for XING it is unverified, so only an apply link or an ATS host counts there,
+# never a careers homepage from the company profile.
+_EMPLOYER_LINK_MIN_SCORE = {"stepstone": 1, "xing": 2}
+
+
+def _employer_link_board(url: str) -> str | None:
+    from bot.apply.job_boards import board_of  # bot.apply.job_boards imports this module
+
+    board = board_of(url)
+    return board if board in _EMPLOYER_LINK_MIN_SCORE else None
+
+
+def _portal_posting(board: str, url: str, fetch_html: Callable[[str], str | None]) -> Resolution:
+    """A StepStone or XING posting: a form at the employer's apply URL named on the page, else
+    channel none. The board page itself is never a form for the worker."""
+    from bot.apply.job_boards import employer_apply_url
+
+    found = employer_apply_url(fetch_html(url) or "", min_score=_EMPLOYER_LINK_MIN_SCORE[board])
+    if found:
+        return Resolution("form", found, ats_from_url(found), f"{board} posting, employer apply url")
+    return Resolution("none", url, None, f"{board} posting, no employer apply url")
+
+
 def resolve_channel(entry: dict, fetch_html: Callable[[str], str | None],
                     board: BoardClient, market: str = "contract") -> Resolution:
     """Канал подачі ліда: email → відомий ATS → платформа з логіном → LinkedIn
@@ -384,7 +409,8 @@ def resolve_channel(entry: dict, fetch_html: Callable[[str], str | None],
     Ринок найму (de_employment): невідомий хост роботодавця це форма для загального
     драйвера (form без ATS), а не none; дошки Ashby/Greenhouse у німецьких фірм
     рідкість, тож пошук дошки там не робиться. application_url з оголошення
-    переважає source_url."""
+    переважає source_url. A StepStone or XING posting becomes a form at the employer's apply
+    URL read from the posting page (`_portal_posting`), or channel none without one."""
     url = entry.get("source_url") or ""
     if market == "de_employment":
         apply_url = entry.get("application_url") or url
@@ -393,6 +419,9 @@ def resolve_channel(entry: dict, fetch_html: Callable[[str], str | None],
         ats = ats_from_url(apply_url)
         if ats:
             return Resolution("form", apply_url, ats, f"{ats} url")
+        portal = _employer_link_board(apply_url)
+        if portal:
+            return _portal_posting(portal, apply_url, fetch_html)
         host = _host(apply_url)
         if "linkedin.com" in host:
             kind = linkedin_apply_kind(fetch_html(apply_url) or "")

@@ -23,7 +23,7 @@ from bot.generators import engagement as _eng
 from bot.textclean import strip_invisible
 from bot.scrapers.liveness import check_liveness
 from bot.job_title import (
-    company_from_text, is_junk_company, is_junk_title, recover_title,
+    company_from_text, is_junk_company, is_junk_title, recover_title, split_page_title,
 )
 
 _cfg = _client.active().targeting
@@ -106,6 +106,10 @@ _REMOTE_RE = re.compile(
 #   full лише повністю віддалена робота: клієнт шукає в одному місті через
 #        дорогу, а «2 Tage Homeoffice» у Кельні все одно означає їздити в Кельн.
 REMOTE_POLICY: str = str(_cfg.get("remote_policy", "any"))
+# targeting.yaml → non_contract_remote_only (contract market): a posting without a contract signal
+# stays only when it is fully remote. A freelancer can pitch B2B to a remote team; an office or
+# hybrid employment is a dead end for him.
+NON_CONTRACT_REMOTE_ONLY: bool = bool(_cfg.get("non_contract_remote_only", False))
 _REMOTE_POLICIES = ("any", "full")
 
 # Поле location пише remote коротко («Remote», «Home-Office», LinkedIn:
@@ -177,6 +181,17 @@ def repair_scraped_entry(entry: dict) -> dict:
         if better:
             fixed["company"] = better
     title = entry.get("title", "")
+    # The company only in the page title («… | Köln | Firma», «… bei der Firma GmbH (m/w/d)»): with
+    # «Unbekannt» or the title as company the job passed the tracker check (03.11.2026, three repeats).
+    company = fixed.get("company", company)
+    if is_junk_company(company) or " ".join(company.split()).lower() == " ".join(title.split()).lower():
+        clean_title, from_title = split_page_title(title)
+        if from_title:
+            fixed["company"] = from_title
+            if clean_title and clean_title != title and not is_junk_title(clean_title):
+                from bot.generators.discover import score_fields
+                fixed.update({"title": clean_title, **score_fields(clean_title, desc)})
+                title = clean_title
     if is_junk_title(title):
         better = recover_title(desc)
         if better:
@@ -281,6 +296,18 @@ def _country_ok(scope: str) -> bool:
     return any(c in homes for c in scope.split(":", 1)[1].split(","))
 
 
+def _fully_remote(entry: dict, scope: str) -> bool:
+    """Fully remote: scope global or europe, or explicit full-remote wording. A bare country scope
+    («Lisbon, Portugal» in location) says where the job is, not that it is remote."""
+    if scope in ("global", "europe"):
+        return True
+    if scope in ("hybrid", "onsite", "us_only"):
+        return False
+    loc = entry.get("location", "") or ""
+    return bool(_FULL_REMOTE_DESC_RE.search(f"{loc} {entry.get('description', '') or ''}")
+                or _full_remote_location(loc))
+
+
 def _language_mismatch(entry: dict) -> str | None:
     """Перша мова (за абеткою), яку вакансія вимагає, а клієнт не має."""
     if not LANGUAGES_OK:
@@ -315,7 +342,11 @@ def email_channel_blocked(company: str) -> bool:
 
 
 def classify_channel(entry: dict) -> str:
-    """Канал подачі: email | stepstone_auto | xing_auto | manual_link."""
+    """Application channel: email | stepstone_auto | xing_auto | interamt_auto | linkedin | manual_link.
+
+    linkedin and manual_link both go to the browser worker's queue (scripts/enqueue_leads.py):
+    linkedin as Easy Apply or as the employer's form behind LinkedIn's external Apply, manual_link
+    as the employer's own form. The separate name keeps LinkedIn out of the manual list."""
     url = (entry.get("source_url") or "").lower()
     if entry.get("email") and not email_channel_blocked(entry.get("company", "")):
         return "email"
@@ -323,10 +354,12 @@ def classify_channel(entry: dict) -> str:
         return "stepstone_auto"
     if "xing.com" in url:
         return "xing_auto"
-    # öД: модуль bot/apply/interamt.py.
-    # Без живої сесії runner чесно поверне login_required → manual-список.
+    # Public service: bot/apply/interamt.py. Without a live session the runner honestly
+    # returns login_required, and the lead goes to the manual list.
     if "interamt.de" in url:
         return "interamt_auto"
+    if "linkedin.com" in url:
+        return "linkedin"
     return "manual_link"
 
 
@@ -518,6 +551,9 @@ def apply_rules(
                 continue
             if scope == "us_only":
                 exclude(entry, "us_only")
+                continue
+            if NON_CONTRACT_REMOTE_ONLY and tags["engagement"] != "contract" and not _fully_remote(entry, scope):
+                exclude(entry, "employment_not_remote")
                 continue
             # «Remote anywhere from Poland», «Remote (Germany)», голе «Poland»
             # у location: remote лише для жителів іншої країни.

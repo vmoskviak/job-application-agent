@@ -426,15 +426,96 @@ def test_handoff_deadline_ends_wait(env):
     assert "handoff_expired" in env.transport.sent[-1].text
 
 
-def test_one_handoff_per_pass(env, tmp_path):
+def test_handoff_does_not_block_next_lead(env, tmp_path):
+    """A hand-off no longer ends the pass: the next queued lead is applied in the same pass,
+    and the open hand-off is awaited at the end."""
     lead2 = {"title": "Android Lead", "company": "Second Co", "channel": "form",
              "apply_url": "https://jobs.ashbyhq.com/secondco/9", "ats": "ashby"}
     pkg2 = _write_package(tmp_path, "second-co-android-lead", lead2, "en", "S", "Hi.", [env.cv])
     enqueue(env.store, pkg2, [], TODAY, "t")
+    lid2 = f"lead-{TODAY}-second-co-android-lead"
     env.driver.script[URL] = ApplyResult("handoff", "ashby", URL, [], reason="captcha")
     env.cards_after_polls[0] = "skipped"
-    run_apply(**env.kw)
-    assert env.driver.calls == 1 and env.store.get(f"lead-{TODAY}-second-co-android-lead")["status"] == "queued"
+    real_apply = env.driver.apply
+
+    def apply(page, url, ctx, dry_run, channel):
+        # the second lead's package names another company; the fake only checks the first
+        if url == lead2["apply_url"]:
+            env.driver.calls += 1
+            return ApplyResult("submitted", "ashby", url, ["s.png"], confirmation_text="thank you for applying")
+        return real_apply(page, url, ctx, dry_run, channel)
+    env.driver.apply = apply
+    res = run_apply(**env.kw)
+    assert env.driver.calls == 2 and env.store.get(lid2)["status"] == "sent" and res.sent == [lid2]
+    assert res.handoff == [LID] and env.store.get(LID)["status"] == "held" and env.polls == 1
+    assert env.driver.opened == 2 and env.driver.closed == 2
+
+
+def test_two_handoffs_resolve_independently(penv):
+    """Two hand-offs in one pass: one answered "done" on its card, the other expires at the deadline."""
+    env = penv
+    env.queue_form("a", URL)
+    env.queue_form("b", ASHBY1)
+    env.driver.script[URL] = ApplyResult("handoff", "ashby", URL, [], reason="captcha")
+    env.driver.script[ASHBY1] = ApplyResult("handoff", "ashby", ASHBY1, [], reason="open_required: Salary")
+    env.clock_jump_after_polls = 2               # 20:00 from the third poll on
+    real_sleep = env.sleep
+
+    def sleep(seconds):
+        real_sleep(seconds)
+        if env.polls == 1:
+            env.cards.update(handoff_cid("a"), status="done")
+    env.kw["sleep"] = sleep
+    res = env.run()
+    assert res.handoff == ["a", "b"] and len([m for m in env.transport.sent if m.buttons]) == 2
+    assert env.store.get("a")["status"] == "sent" and env.store.get("a")["sent_id"] == "form:operator"
+    assert env.store.get("b")["status"] == "failed" and env.store.get("b")["error"].startswith("handoff_expired")
+    assert env.cards.get(handoff_cid("b"))["status"] == "expired" and env.cards.get(handoff_cid("a"))["status"] == "done"
+    assert res.sent == ["a"] and res.failed == ["b"] and env.polls == 3
+    assert env.driver.opened == 2 and env.driver.closed == 2
+
+
+def test_quick_operator_done_is_recorded_between_leads(penv):
+    """The operator answers the first hand-off while the next lead is being applied: the answer
+    is recorded before the following lead starts, and no waiting poll is needed."""
+    env = penv
+    env.queue_form("a", URL)
+    env.queue_form("b", ASHBY1)
+    env.queue_form("c", ASHBY1 + "0")
+    env.driver.script[URL] = ApplyResult("handoff", "ashby", URL, [], reason="captcha")
+    real_apply = env.driver.apply
+    order = []
+
+    def apply(page, url, ctx, dry_run, channel):
+        out = real_apply(page, url, ctx, dry_run, channel)
+        if url == ASHBY1:
+            env.cards.update(handoff_cid("a"), status="done")   # tap while "b" is on screen
+        order.append((url, env.store.get("a")["status"]))
+        return out
+    env.driver.apply = apply
+    res = env.run()
+    assert order == [(URL, "sending"), (ASHBY1, "handoff"), (ASHBY1 + "0", "sent")]
+    assert res.sent == ["b", "a", "c"] and res.handoff == ["a"] and env.polls == 0
+    assert env.driver.closed == 3
+
+
+def test_pause_mid_pass_still_waits_for_open_handoff(penv):
+    """/pause after a hand-off: no new lead starts, but the open hand-off is still awaited."""
+    env = penv
+    env.queue_form("a", URL)
+    env.queue_form("b", ASHBY1)
+    env.driver.script[URL] = ApplyResult("handoff", "ashby", URL, [], reason="captcha")
+    real_apply = env.driver.apply
+
+    def apply(page, url, ctx, dry_run, channel):
+        out = real_apply(page, url, ctx, dry_run, channel)
+        set_paused(env.state, True)
+        return out
+    env.driver.apply = apply
+    env.driver.probe_after_polls[1] = "application submitted"   # probe 0 is the between-leads poll
+    res = env.run()
+    assert res.paused and env.driver.calls == 1 and env.store.get("b")["status"] == "queued"
+    assert env.store.get("a")["status"] == "sent" and env.polls == 1 and env.driver.closed == 1
 
 
 def _second_lead(env, tmp_path) -> str:
@@ -717,6 +798,72 @@ def test_offsite_without_link_is_held(penv):
     assert env.driver.closed == 1 and env.driver.calls == 0
 
 
+def test_offsite_without_link_takes_the_employer_page_the_lookup_finds(penv):
+    """02.11.2026: three LinkedIn offsite leads were held no_apply_link; the employer lookup now looks
+    for the job on the employer's site and the lead goes on as a form in the same pass."""
+    from bot.apply.employer_lookup import Posting
+
+    env = penv
+    asked = []
+    env.kw["cfg"].lookup = lambda company, title, city: (asked.append((company, title)),
+                                                          Posting("https://careers.example.com/job/7"))[1]
+    env.queue_offsite("li1", URL1)
+    env.driver.offsite[URL1] = ("open", None)
+    res = env.run()
+    rec = env.store.get("li1")
+    assert asked == [("Contract Co", "Android li1")]
+    assert res.resolved == ["li1"] and rec["channel"] == "form" and rec["apply_url"] == "https://careers.example.com/job/7"
+    lead = json.loads((env.pkg("li1") / "lead.json").read_text())
+    assert lead["resolver_note"] == "linkedin offsite without apply link, employer page by lookup"
+
+
+def test_offsite_without_link_and_without_a_lookup_hit_is_held(penv):
+    env = penv
+    env.kw["cfg"].lookup = lambda company, title, city: None
+    env.queue_offsite("li1", URL1)
+    env.driver.offsite[URL1] = ("open", None)
+    env.run()
+    assert env.store.get("li1")["status"] == "held" and env.store.get("li1")["reasons"] == ["no_apply_link"]
+
+
+def test_offsite_that_is_easy_apply_goes_on_as_easy_apply_in_same_pass(penv):
+    env = penv
+    env.queue_offsite("li1", URL1)
+    env.driver.offsite[URL1] = ("easy_apply", None)
+    res = env.run()
+    rec = env.store.get("li1")
+    assert res.resolved == ["li1"] and res.sent == ["li1"]
+    assert rec["channel"] == "linkedin_easy" and rec["platform"] == "linkedin" and rec["apply_url"] == URL1
+    assert rec["resolved_from"] == URL1 and rec["sent_id"].startswith("linkedin:")
+    lead = json.loads((env.pkg("li1") / "lead.json").read_text())
+    assert lead["channel"] == "linkedin_easy" and lead["apply_url"] == URL1
+    assert lead["resolver_note"] == "linkedin easy apply, logged-in page"
+    assert env.driver.channels == [(URL1, "linkedin_easy")]
+    assert sent_today_platform(env.store, env.today, "linkedin") == 1 and sent_today(env.store, env.today, "form") == 0
+
+
+def test_offsite_turned_easy_over_linkedin_limit_stays_queued_as_easy(penv):
+    env = penv
+    env.limits["linkedin"] = 0
+    env.queue_offsite("li1", URL1)
+    env.driver.offsite[URL1] = ("easy_apply", None)
+    res = env.run()
+    rec = env.store.get("li1")
+    assert res.resolved == ["li1"] and res.sent == [] and res.skipped_limit == 1
+    assert rec["status"] == "queued" and rec["channel"] == "linkedin_easy" and env.driver.calls == 0
+
+
+def test_offsite_turned_easy_in_linkedin_shadow_fills_without_submit(penv):
+    env = penv
+    env.targeting["platforms"]["linkedin"] = "shadow"
+    env.queue_offsite("li1", URL1)
+    env.driver.offsite[URL1] = ("easy_apply", None)
+    res = env.run()
+    rec = env.store.get("li1")
+    assert res.sent == [] and rec["status"] == "queued" and rec["channel"] == "linkedin_easy"
+    assert env.driver.dry_calls == 1 and env.dry.read()[0]["channel"] == "linkedin_easy"
+
+
 def test_offsite_closed_is_held_not_live(penv):
     env = penv
     env.queue_offsite("li1", URL1)
@@ -921,15 +1068,15 @@ def test_handoff_record_not_reopened(penv):
     assert env.store.get("a")["error"].startswith("handoff_expired")
 
 
-def test_handoff_ends_pass_after_platform_submissions(penv):
+def test_platform_handoff_does_not_end_pass(penv):
     env = penv
     env.queue_easy("a", URL1)
     env.queue_platform("g", GULP1, "gulp")
     env.queue_platform("g2", GULP1 + "2", "gulp")
     env.driver.script[GULP1] = ApplyResult("handoff", "gulp", GULP1, [], reason="captcha")
-    env.driver.probe_after_polls[0] = "danke"
+    env.driver.probe_after_polls[0] = "danke"   # seen by the poll before "g2" starts
     res = env.run()
-    assert res.sent == ["a", "g"] and res.handoff == ["g"] and env.store.get("g2")["status"] == "queued"
+    assert res.sent == ["a", "g", "g2"] and res.handoff == ["g"] and env.store.get("g2")["status"] == "sent"
 
 
 def test_form_restricted_is_failed(penv):
@@ -1177,3 +1324,42 @@ def test_handoff_without_buttons_confirmed_by_page(env):
     env.driver.probe_after_polls[1] = "Vielen Dank für Ihre Bewerbung"
     res = run_apply(**env.kw)
     assert res.sent == [LID] and "portal_submitted (портал)" in env.tracker.read_text(encoding="utf-8")
+
+
+# ── one card record per hand-off id, cards of decided leads close ──
+
+def test_second_handoff_reuses_card_and_waits_for_new_answer(env):
+    """A lead that reaches hand-off again after an earlier skipped card: the old answer must not
+    resolve the new card, and the store keeps one record per card id."""
+    cid = handoff_cid(LID)
+    env.cards.append({"id": cid, "kind": "handoff", "status": "skipped", "lead_id": LID, "url": URL,
+                      "reason": "captcha", "at": "2026-10-26 13:32", "closed_at": "2026-10-26 13:38"})
+    env.driver.script[URL] = ApplyResult("handoff", "ashby", URL, [], reason="open_required: Einstieg ab")
+    env.cards_after_polls[1] = "done"
+    res = run_apply(**env.kw)
+    assert env.store.get(LID)["status"] == "sent" and LID in res.sent
+    recs = [c for c in env.cards.read() if c["id"] == cid]
+    assert len(recs) == 1 and recs[0]["status"] == "done" and recs[0]["reason"] == "open_required: Einstieg ab"
+
+
+def test_submit_closes_an_older_open_card_of_the_lead(env):
+    env.cards.append({"id": "handoff-old", "kind": "handoff", "status": "open", "lead_id": LID, "url": URL})
+    env.driver.script[URL] = ApplyResult("submitted", "ashby", URL, ["s.png"], confirmation_text="thank you")
+    run_apply(**env.kw)
+    card = env.cards.get("handoff-old")
+    assert card["status"] == "done" and card["closed_at"] == f"{TODAY} 10:00"
+
+
+def test_pass_start_closes_open_cards_of_sent_and_held_leads(penv):
+    """The operator marked the lead sent (or held) by hand: its open card closes on the next pass."""
+    env = penv
+    env.store.append({"id": "manual-sent", "status": "sent", "channel": "form", "sent_at": "2026-10-26 15:41"})
+    env.store.append({"id": "manual-held", "status": "held", "channel": "form", "reasons": ["operator_skipped"]})
+    env.store.append({"id": "waiting", "status": "handoff", "channel": "form", "handoff_at": f"{TODAY} 09:00",
+                      "handoff_card": "handoff-waiting"})
+    for lid in ("manual-sent", "manual-held", "waiting"):
+        env.cards.append({"id": f"handoff-{lid}", "kind": "handoff", "status": "open", "lead_id": lid})
+    env.run()
+    assert env.cards.get("handoff-manual-sent")["status"] == "done"
+    assert env.cards.get("handoff-manual-held")["status"] == "skipped"
+    assert env.cards.get("handoff-waiting")["status"] == "open"

@@ -92,12 +92,17 @@ if [ -z "${JOBSEARCH_LOCK_HELD:-}" ]; then
 fi
 # A failed data pull (22.10.2026: the same file created on the server and on the Mac)
 # used to leave only a log line, and all runs of the day went on stale trackers. Now:
-# the half-done rebase is aborted, the run goes on local state, the operator gets an
+# a stopped merge is aborted, the run goes on local state, the operator gets an
 # alert with the list of files in the way.
-git -C "$ROOT" pull --rebase >> "$LOG" 2>&1 || {
-  git -C "$ROOT" rebase --abort >/dev/null 2>&1
+# A merge, not a rebase (02.11.2026): between runs the browser worker leaves rewritten package
+# files uncommitted, and `pull --rebase` refuses any such tree (see PULL in scripts/inbox_watch.py).
+# The same lock file as repo_lock() in scripts/inbox_watch.py: the hourly services pull and push
+# the same repository, and two syncs at once fail (29.10.2026).
+SYNC_LOCK="$(git -C "$ROOT" rev-parse --absolute-git-dir)/jobsearch-sync.lock"
+flock -w 120 "$SYNC_LOCK" git -C "$ROOT" pull --no-rebase --no-edit >> "$LOG" 2>&1 || {
+  git -C "$ROOT" merge --abort >/dev/null 2>&1
   echo "[$(date)] $MODE: data git pull failed, run on local state" >> "$LOG"
-  alert "Datenpull fehlgeschlagen (git pull --rebase), Lauf auf lokalem Stand" \
+  alert "Datenpull fehlgeschlagen (git pull), Lauf auf lokalem Stand" \
     "$(git -C "$ROOT" status --short 2>&1 | head -20; tail -c 1500 "$LOG")"
 }
 
@@ -177,8 +182,10 @@ echo "$EMP_OUT" >> "$LOG"
 MARKER="$(echo "$MODE" | tr '[:lower:]' '[:upper:]') OK"
 if [ $EXIT_CODE -ne 0 ] || ! grep -q "$MARKER" "$LOG"; then
   TAIL="$(tail -c 3000 "$LOG")"
-  if echo "$TAIL" | grep -qiE "limit reached|rate.?limit|usage limit"; then
-    REASON="Claude-Limit erreicht"
+  # «You've hit your weekly limit · resets Nov 2, 12am» (31.10.2026) matched none of the old words
+  LIMIT_LINE="$(echo "$TAIL" | grep -iE "limit reached|rate.?limit|usage limit|hit your .*limit" | tail -1)"
+  if [ -n "$LIMIT_LINE" ]; then
+    REASON="Claude-Limit erreicht: $LIMIT_LINE"
   elif [ $EXIT_CODE -eq 124 ]; then
     REASON="Timeout nach 3 Stunden"
   else

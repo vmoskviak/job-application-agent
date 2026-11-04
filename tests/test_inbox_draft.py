@@ -58,3 +58,13 @@ def test_draft_prompt_forbids_claiming_actions_taken():
     p = draft_prompt(MAILS["agency_outreach_de"], "interview", "de", "BRIEF", jordan_profile(), "")
     assert "never claim that an action has already been taken" in p
     assert "propose times" in p
+
+
+def test_assemble_draft_greeting_drops_tracker_notes_from_company():
+    """The tracker cell can carry notes («X (via Agency, Person)»); the greeting names only the firm."""
+    profile = jordan_profile()
+    text = assemble_draft("Thanks.", "en", profile, "", "Nordwind Health (via Talentbridge, Jane Roe)")
+    assert text.startswith("Hello Nordwind Health team,")
+    assert assemble_draft("Thanks.", "en", profile, "", "Nordwind Health via Talentbridge").startswith(
+        "Hello Nordwind Health team,")
+    assert assemble_draft("Thanks.", "en", profile, "", "(unknown client)").startswith("Hello,")

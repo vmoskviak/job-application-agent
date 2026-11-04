@@ -44,6 +44,16 @@ def _rate_limit() -> None:
     _last_nav_at = time.time()
 
 
+# A visible window on the server display (Xvfb 1280x900, VNC): the window itself is the screen size
+# and the page takes what the browser chrome leaves. A fixed viewport made the window taller than the
+# screen (1288x1031), and the bottom of forms was out of sight. No AutomationControlled: some sites
+# (LinkedIn) spot automation before the login. scripts/relogin.py opens the same profile with it.
+HEADED_LAUNCH = {
+    "args": ["--disable-blink-features=AutomationControlled", "--window-position=0,0", "--window-size=1280,900"],
+    "no_viewport": True,
+}
+
+
 def get_context(headed: bool = False):
     """Спільний persistent-контекст профілю; запускається один раз на процес.
 
@@ -64,11 +74,10 @@ def get_context(headed: bool = False):
 
     PROFILE_DIR.mkdir(parents=True, exist_ok=True)
     _playwright = sync_playwright().start()
-    extra = {"args": ["--disable-blink-features=AutomationControlled"]} if headed else {}
+    extra = HEADED_LAUNCH if headed else {"viewport": {"width": 1280, "height": 900}}
     _context = _playwright.chromium.launch_persistent_context(
         user_data_dir=str(PROFILE_DIR),
         headless=not headed,
-        viewport={"width": 1280, "height": 900},
         locale="de-DE",
         **extra,
     )

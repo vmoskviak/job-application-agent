@@ -28,6 +28,9 @@ language_levels: {Deutsch: C1, Englisch: B1-B2}
 links: {linkedin: '', github: '', website: ''}   # https://www.linkedin.com/in/<handle>
 # Rate for compensation/salary questions in forms (contract market).
 rate: {hourly_target: '', currency_default: EUR}
+# Contract market: the number for forms that ask an annual salary in EUR (or a bare numeric
+# salary field), digits only: '100000'. Empty = such a field goes to the operator.
+annual_salary: ''
 # Answers to common extra questions in portal forms. pattern: regex over the
 # question text; answer: text for the field, choice: yes|no: the Ja/Nein radio.
 # Questions missing here are not guessed by the bot: the application goes to the operator as manual.

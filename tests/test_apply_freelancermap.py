@@ -73,10 +73,14 @@ class Loc:
     def set_input_files(self, files, timeout=None):
         self._need()
         self.page.uploaded = list(files) if isinstance(files, list) else [files]
+        self.page.upload_calls.append(list(self.page.uploaded))
 
     def evaluate(self, js):
         self._need()
-        assert self.key == "file" and "files" in js, f"unexpected evaluate on {self.key}: {js}"
+        assert self.key == "file", f"unexpected evaluate on {self.key}: {js}"
+        if "multiple" in js:
+            return self.page.multiple
+        assert "files" in js, js
         return 0 if self.page.attach_fails else len(self.page.uploaded)
 
     def is_checked(self, timeout=None):
@@ -122,6 +126,8 @@ class FakeProjectPage:
         self.submitted = False
         self.filled: dict[str, str] = {}
         self.uploaded: list[str] = []
+        self.upload_calls: list[list[str]] = []
+        self.multiple = True
         self.checked = {
             "email": bool(re.search(r'checked="" name="sendEmail"', html)),
             "phone": bool(re.search(r'checked="" name="sendPhone"', html)),
@@ -429,3 +435,12 @@ def test_upload_not_attached_is_handoff(tmp_path, files):
         res = apply(page, URL, "x", list(files), tmp_path, dry)
         assert (res.status, res.reason) == ("handoff", "upload_not_attached")
         assert not page.submitted and page.clicks == []
+
+
+def test_single_file_input_gets_files_one_by_one(tmp_path, files):
+    """Live 29.10.2026: the input has no `multiple`, several files in one call throw."""
+    cv, projektliste = files
+    page = FakeProjectPage(fixture_html("freelancermap_project.html"), confirm=True)
+    page.multiple = False
+    res = apply(page, URL, "x", [cv, projektliste], tmp_path, dry_run=True)
+    assert res.status == "dry_run" and page.upload_calls == [[str(cv)], [str(projektliste)]]

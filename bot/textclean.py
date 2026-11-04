@@ -1,16 +1,17 @@
-"""Невидимі символи в тексті вакансій.
+"""Invisible characters in job texts.
 
-Портали (Arbeitsagentur, Interamt) розставляють у довгих німецьких словах
-м'які переноси U+00AD: «Arbeit­nehmer­über­lassung» на екрані виглядає цілим,
-а regex його не бачить. Так 08.10.2026 повз виключення пройшла вакансія з
-Arbeitnehmerüberlassung. Те саме роблять zero-width пробіли.
+Portals (Arbeitsagentur, Interamt) put soft hyphens U+00AD into long German words:
+"Arbeit\u00adnehmer\u00adüber\u00adlassung" looks whole on screen, but a regex does not see it.
+That is how a posting with Arbeitnehmerüberlassung slipped past the exclusions on 08.10.2026.
+Zero-width spaces do the same, and Upwork alert mails pad their preheader with
+U+034F (combining grapheme joiner) between soft hyphens.
 """
 
 from __future__ import annotations
 
 import re
 
-_INVISIBLE_RE = re.compile("[­​‌‍⁠﻿]")
+_INVISIBLE_RE = re.compile("[\u00ad\u034f\u200b\u200c\u200d\u2060\ufeff]")
 
 
 def strip_invisible(text: str | None) -> str:

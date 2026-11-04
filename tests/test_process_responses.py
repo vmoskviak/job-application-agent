@@ -36,6 +36,14 @@ def test_update_tracker_status_main_table(tmp_path):
     row = next(l for l in text.splitlines() if "Musterfirma" in l)
     assert "| interview_1 |" in row
     assert "| 2026-07-08 |" in row
+    assert "| Follow-up |" in row   # an open row keeps its next action
+
+
+def test_a_rejection_clears_the_next_action(tmp_path):
+    tracker = _tracker(tmp_path)
+    assert update_tracker_status(tracker, "Beispiel AG", "rejected", "2026-07-08")
+    row = next(l for l in tracker.read_text(encoding="utf-8").splitlines() if "Beispiel" in l)
+    assert "| rejected | 2026-07-08 | — | Köln |" in row
 
 
 def test_update_tracker_status_never_downgrades_terminal(tmp_path):

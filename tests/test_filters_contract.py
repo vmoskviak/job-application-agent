@@ -154,3 +154,31 @@ def test_contract_closed_posting(tmp_path, monkeypatch):
     ]
     res = rules.apply_rules(digest, tmp_path / "tracker.md", min_score=25)
     assert {e["company"]: e["reason"] for e in res["excluded"]} == {"Closed Co": "closed"}
+
+
+def test_non_contract_needs_full_remote(tmp_path, monkeypatch):
+    """non_contract_remote_only: a posting without a contract signal stays only when fully remote;
+    hybrid, office or unknown employment is dropped, a contract keeps the usual region rules."""
+    rules = _contract_rules(monkeypatch, NON_CONTRACT_REMOTE_ONLY=True)
+    base = {"title": "Android Engineer", "score": 60, "category": "android"}
+    digest = [
+        {**base, "company": "Perm Remote", "location": "Remote",
+         "description": "Kotlin, Compose. Fully remote, work from anywhere in Europe."},
+        {**base, "company": "Perm Hybrid", "location": "Lisbon, Portugal",
+         "description": "Kotlin, Compose. Hybrid: two days a week in our Lisbon office."},
+        {**base, "company": "Perm Silent", "location": "Lisbon, Portugal", "description": "Kotlin, Compose."},
+        {**base, "company": "Contract Hybrid", "location": "Lisbon, Portugal",
+         "description": "Freelance contract, hybrid, two days a week in our Lisbon office."},
+    ]
+    res = rules.apply_rules(digest, tmp_path / "tracker.md", min_score=25)
+    reasons = {e["company"]: e["reason"] for e in res["excluded"]}
+    assert reasons == {"Perm Hybrid": "employment_not_remote", "Perm Silent": "employment_not_remote"}
+    assert {e["company"] for e in res["selected"]} == {"Perm Remote", "Contract Hybrid"}
+
+
+def test_non_contract_remote_only_is_off_by_default(tmp_path, monkeypatch):
+    rules = _contract_rules(monkeypatch)
+    digest = [{"title": "Android Engineer", "score": 60, "category": "android", "company": "Perm Silent",
+               "location": "Lisbon, Portugal", "description": "Kotlin, Compose."}]
+    res = rules.apply_rules(digest, tmp_path / "tracker.md", min_score=25)
+    assert [e["company"] for e in res["selected"]] == ["Perm Silent"]

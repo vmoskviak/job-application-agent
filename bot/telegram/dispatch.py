@@ -1,9 +1,11 @@
-"""Диспетчер натиснутих кнопок: детерміновані дії без LLM.
+"""Dispatcher of pressed buttons: deterministic actions without an LLM.
 
-send → відповідь у треді через scripts/gmail_rest.py (той самий шлях, яким
-відповідає ранковий агент), картка стає sent, у трекер іде нотатка з Msg-ID.
-Другий тап на ту саму картку нічого не шле: Telegram повторює callback-и, а
-оператор тисне двічі. Пауза (/pause) зупиняє лише відправку.
+send → a reply in the thread through scripts/gmail_rest.py (the same path the
+morning agent replies by), the card becomes sent, the tracker gets a note with the
+Msg-ID. A second tap on the same card sends nothing: Telegram repeats callbacks and
+the operator taps twice. Pause (/pause) stops sending only.
+Upwork proposal cards (stage 2e) send nothing at all: the operator submits on Upwork
+himself, "done" closes the card and writes the tracker row, "send" is refused.
 """
 from __future__ import annotations
 
@@ -15,7 +17,7 @@ from datetime import date, timedelta
 from pathlib import Path
 from typing import Protocol
 
-from bot.generators.inbox import append_note, append_row
+from bot.generators.inbox import append_note, append_row, is_no_reply
 from bot.state import JsonlStore, is_paused, set_paused
 from bot.telegram.service import Action
 
@@ -76,6 +78,24 @@ class GmailRestSender:
             f"{(proc.stdout + proc.stderr).strip()[-500:]}")
 
 
+def upwork_row(tracker: Path, card: dict, today: str, followup_days: int, source_label: str, by: str) -> None:
+    """Tracker row for an Upwork proposal (stage 2e), sent by the operator or by the server. The
+    alert does not name the client, so the company cell carries the client's country; the notes
+    identify the job without the click-tracking URL."""
+    until = (date.fromisoformat(today[:10]) + timedelta(days=followup_days)).isoformat()
+    country = card.get("country") or ""
+    notes = "; ".join(x for x in (
+        f"Upwork alert {card['alert_date']}" if card.get("alert_date") else "",
+        f"saved search: {card['saved_search']}" if card.get("saved_search") else "",
+        f"budget {card['budget']}" if card.get("budget") else "",
+        f"job {card['job_id']}" if card.get("job_id") else "",
+        f"proposal {card['proposal_id']}" if card.get("proposal_id") else "",
+        by) if x)
+    append_row(tracker, date=today, company=f"Upwork client ({country})" if country else "Upwork client",
+               position=card.get("title") or "", source=f"{source_label}: upwork", salary="",
+               status="portal_submitted (портал)", next_action=f"wait reply until {until}", notes=notes)
+
+
 class Dispatcher:
     def __init__(self, sender: Sender, cards: JsonlStore, tracker: Path, state_dir: Path,
                  today: Callable[[], str], queue: JsonlStore | None = None, source_label: str = "contract",
@@ -118,8 +138,12 @@ class Dispatcher:
                    status="portal_submitted (портал)", next_action=f"wait reply until {until}",
                    notes=f"{url}, confirmed by operator")
 
+    def _upwork_row(self, card: dict) -> None:
+        upwork_row(self.tracker, card, self.today(), self.followup_days, self.source_label,
+                   "submitted by the operator")
+
     def apply(self, action: Action) -> str:
-        """Квитанція для оператора: «OK …» або «ERR …»."""
+        """Receipt for the operator: "OK …" or "ERR …"."""
         if action.action == "pause":
             set_paused(self.state_dir, True)
             return "OK paused"
@@ -137,19 +161,30 @@ class Dispatcher:
             return "OK skipped"
         if action.action == "done":
             self.cards.update(card["id"], status="done", closed_at=self.today())
-            platform = self._platform(card)   # до _close_lead: запис ліда ще той, що бачив воркер
+            if card.get("kind") == "upwork":
+                try:
+                    self._upwork_row(card)
+                except Exception as e:  # noqa: BLE001 — the proposal is on Upwork already; a human fixes the tracker
+                    return f"OK done, tracker error: {e}"
+                return "OK done"
+            platform = self._platform(card)   # before _close_lead: the lead record is still the one the worker saw
             if self._close_lead(card, status="sent", sent_id=f"{platform or 'form'}:operator",
                                 sent_at=self.today()):
                 try:
                     self._handoff_row(card, platform)
-                except Exception as e:  # noqa: BLE001 — подача вже зарахована; трекер поправить людина
+                except Exception as e:  # noqa: BLE001 — the application counts already; a human fixes the tracker
                     self.queue.update(card["lead_id"], tracker_error=str(e)[:500])
                     return f"OK done, tracker error: {e}"
             return "OK done"
         if action.action != "send":
             return f"ERR unknown action {action.action}"
+        if card.get("kind") == "upwork":   # the card has no send button; an old or forged callback
+            return "ERR an Upwork proposal is submitted on Upwork by hand, nothing goes out by email"
         if is_paused(self.state_dir):
             return "ERR paused"
+        # cards posted before the watcher knew no-reply senders still carry a send button (29.10.2026)
+        if is_no_reply(card.get("reply_to") or card.get("from") or ""):
+            return "ERR no-reply sender, reply in the portal or Gmail"
         if not (card.get("draft") or "").strip():
             return "ERR no draft"
         try:

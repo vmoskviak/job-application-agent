@@ -156,3 +156,87 @@ def test_copy_has_only_telegram_html_tags():
         for lang in ("uk", "en"):
             strings += [v for v in table[lang].values() if isinstance(v, str)]
     assert [s for s in strings if _bad_tags(s)] == []
+
+
+def test_info_card_has_reason_and_only_the_gmail_button():
+    """A mail the bot must not answer: who, why there is no draft, an excerpt, Gmail; nothing to tap."""
+    from bot.telegram.cards import info_card
+
+    item = _item(**{"from": "Example Co <no-reply@example.com>", "body": "Interview on <Thursday>"})
+    c = info_card(item, "interview", "https://mail.google.com/x", "uk", "no_reply")
+    assert c.kind == "info" and c.text.startswith("<b>Example Co</b> · Співбесіда")
+    assert "не приймає відповідей" in c.text and "&lt;Thursday&gt;" in c.text
+    assert [[(b.data, b.url) for b in row] for row in c.buttons] == [[(None, "https://mail.google.com/x")]]
+    closed = info_card(_item(), "info_request", "u", "en", "closed", status="withdrew")
+    assert "closed (withdrew)" in closed.text
+    assert "Trash" in info_card(_item(), "interview", "u", "en", "trashed").text
+
+
+# ── Upwork card (stage 2e) ───────────────────────────────────────────────────
+
+def _upwork_job(**over):
+    from dataclasses import replace
+
+    from bot.generators.upwork_alert import parse_alert
+    from tests.upwork_fixtures import SUBJECT, alert_body
+    return replace(parse_alert(SUBJECT, alert_body(), message_id="19a0000000000001"), **over)
+
+
+PROPOSAL = "Your app needs a sync layer that works offline & on iOS.\nI would start with the data module.\n\nBest regards,\nJordan"
+
+
+def test_upwork_card_uk_copy_link_in_text_and_two_buttons():
+    from bot.telegram.cards import upwork_card
+    job = _upwork_job()
+    c = upwork_card(job, PROPOSAL, "high", "Kotlin Multiplatform, his core work", 120, "up-19a000000000", "uk")
+    assert c.kind == "upwork" and c.text.startswith("<b>Upwork · Example Fitness Companion App</b>\n")
+    for line in ("Фіксована ціна $2,000 · 3 to 6 months",
+                 "Клієнт: оплату підтверджено · рейтинг 5.0 · витрачено $2k · PRT",
+                 "Навички: iOS, Android, Health &amp; Wellness", "Збережений пошук: android kotlin",
+                 "Ставка: $2,000 (бюджет клієнта)", "Відповідність: висока · Kotlin Multiplatform, his core work",
+                 f'<a href="{job.job_link}">Відкрити вакансію на Upwork</a>'):
+        assert line in c.text
+    assert "<pre>Your app needs a sync layer that works offline &amp; on iOS." in c.text and c.text.endswith("</pre>")
+    assert [(b.text, b.data, b.url) for row in c.buttons for b in row] == [
+        ("Подав", "done:up-19a000000000", None), ("Пропустити", "skip:up-19a000000000", None)]
+
+
+def test_upwork_card_en_hourly_bid_and_unknown_signals():
+    from bot.telegram.cards import upwork_card
+    job = _upwork_job(budget_type="hourly", budget_min=40.0, budget_max=80.0, duration="", payment_verified=None,
+                      rating=None, spent="", country="", skills=[], saved_search="")
+    c = upwork_card(job, PROPOSAL, "medium", "", 120, "up-1", "en")
+    assert "\nHourly $40-$80\n" in c.text and "Client: payment unknown\n" in c.text and "Bid: $120/h" in c.text
+    assert "Fit: medium\n" in c.text and "Skills:" not in c.text and "Saved search:" not in c.text
+    assert [b.text for row in c.buttons for b in row] == ["Submitted", "Skip"]
+
+
+def test_upwork_card_unknown_budget_has_no_bid():
+    from bot.telegram.cards import upwork_card
+    c = upwork_card(_upwork_job(budget_type="unknown", budget_min=None, budget_max=None), PROPOSAL, "high", "x",
+                    120, "up-1", "en")
+    assert "Budget unknown · 3 to 6 months" in c.text and "Bid: —" in c.text
+
+
+def test_upwork_card_escapes_values():
+    from bot.telegram.cards import upwork_card
+    c = upwork_card(_upwork_job(title="<b>Fix</b> & ship"), "a < b", "low", "<i>why</i>", 120, "up-1", "en")
+    assert "Upwork · &lt;b&gt;Fix&lt;/b&gt; &amp; ship</b>" in c.text and "&lt;i&gt;why&lt;/i&gt;" in c.text
+    assert "<pre>a &lt; b</pre>" in c.text
+
+
+def test_upwork_card_trims_a_long_proposal_and_keeps_pre_closed():
+    from bot.telegram.cards import upwork_card
+    job = _upwork_job()
+    c = upwork_card(job, "Tom & Jerry " * 600, "high", "x", 120, "up-1", "en")
+    assert len(c.text) <= 4000 and c.text.endswith("…</pre>") and c.text.count("<pre>") == 1
+    assert f'<a href="{job.job_link}">' in c.text
+
+
+def test_upwork_card_overlong_link_falls_back_to_the_alert_mail():
+    from bot.telegram.cards import upwork_card
+    from tests.upwork_fixtures import track
+    job = _upwork_job(job_link=track(13, length=3600))
+    c = upwork_card(job, PROPOSAL, "high", "x", 120, "up-1", "en", mail_url="https://mail.google.com/x#all/19a0")
+    assert job.job_link not in c.text and '<a href="https://mail.google.com/x#all/19a0">' in c.text
+    assert len(c.text) <= 4000 and "Your app needs a sync layer" in c.text

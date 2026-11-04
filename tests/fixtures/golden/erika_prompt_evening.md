@@ -90,14 +90,23 @@ page. Hit `mcp__firecrawl__firecrawl_scrape` on the listings:
 https://de.indeed.com/jobs?q=Assistenz+OR+Office+Manager&l=Düsseldorf&radius=50
 ```
 
-From the markdown extract `jk=<16 hex>` and build direct URLs of the form
-`https://de.indeed.com/viewjob?jk=<id>`. Ignore pagead redirects from emails:
-they do not resolve.
+From the markdown take every job: `jk=<16 hex>` (the link `https://de.indeed.com/viewjob?jk=<id>`), the title,
+the company and the city. `/viewjob` is behind Cloudflare, so these links do NOT go into the urls file: write one
+object `{"url": "<viewjob link>", "company": "<Firma>", "title": "<Stellentitel>", "city": "<Ort>"}` per job that
+fits the client's tracks and locations into the JSON list `var/run/indeed_leads_YYYY-MM-DD.json`. Ignore pagead
+redirects from emails: they do not resolve.
 
 ## Step 3: Collect URLs
 
 Deduplicate, write to `var/run/urls_YYYY-MM-DD.txt` (one URL per line).
 Add here also the lines from `var/run/urls_facet_YYYY-MM-DD.txt` (Step 2b), if the file exists.
+Then resolve the Indeed jobs of Step 2c: the script looks for each job on the employer's own site or ATS (the page
+must name this job and this employer) and appends the page it finds to the urls file, so the job goes through
+discover → filter → tailoring like any employer posting. Its `unresolved` list (also in
+`var/run/indeed_leads_YYYY-MM-DD.resolved.json`) goes to the manual list of the morning report, not into discover.
+```bash
+js scripts/resolve_employer.py var/run/indeed_leads_YYYY-MM-DD.json --append var/run/urls_YYYY-MM-DD.txt
+```
 
 ## Step 4: Discover (Python)
 
@@ -126,7 +135,7 @@ If the posting names an addressee (Ansprechpartner, "Bewerbungen an Frau/Herrn �
 
 `mcp__gmail__send_email` → **erika.mustermann.jobs@example.com** (NOT `mcp__claude_ai_Gmail__*`).
 Subject: `[Job Digest] YYYY-MM-DD: N Stellen zur Bewerbung` (in German, no dashes).
-Body in German: (1) selected with the channel (`email` / `stepstone_auto` / `xing_auto` / `manual_link`), company, role, score, link; (2) excluded with reasons (briefly, in groups); (3) intake statistics.
+Body in German: (1) selected with the channel (`email` / `stepstone_auto` / `xing_auto` / `linkedin` / `manual_link`), company, role, score, link; (2) excluded with reasons (briefly, in groups); (3) intake statistics.
 
 Send as **HTML** (`mimeType: "multipart/alternative"`, `body` is the plain-text fallback) following the template from `morning_apply_agent.md` Step 9: header (blue `#0969da` instead of green, title "Job Digest"), all captions in German (Ausgewählt / Aussortiert / Geprüft / Geschlossen, Kanal, Gründe), metrics selected/excluded/live/closed, selected as rows with a channel badge and a clickable link, excluded collapsed into reason groups in small grey font.
 

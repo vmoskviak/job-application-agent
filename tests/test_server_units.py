@@ -10,19 +10,32 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 UNITS_DIR = ROOT / "scripts" / "server" / "systemd"
-UNITS = sorted(UNITS_DIR.glob("*.service")) if UNITS_DIR.is_dir() else []
+UNITS = sorted(UNITS_DIR.glob("jobsearch-*.service")) if UNITS_DIR.is_dir() else []
+# Machine units: the display and VNC the headed worker and the hand-offs need, not engine scripts
+DISPLAY_UNITS = ("xvfb.service", "x11vnc.service")
 RUN_SERVICE = ROOT / "scripts" / "server" / "run_service.sh"
 
 
 def test_units_reference_existing_scripts():
-    assert {u.name for u in UNITS} == {"jobsearch-telegram@.service", "jobsearch-inbox@.service",
-                                       "jobsearch-dispatch@.service", "jobsearch-apply@.service"}
+    assert {u.name for u in UNITS_DIR.glob("*.service")} == {
+        "jobsearch-telegram@.service", "jobsearch-inbox@.service", "jobsearch-dispatch@.service",
+        "jobsearch-apply@.service", *DISPLAY_UNITS}
     for unit in UNITS:
         text = unit.read_text(encoding="utf-8")
         m = re.search(r"run_service\.sh (\S+) %i", text)
         assert m, unit.name
         assert (ROOT / m.group(1)).exists(), m.group(1)
         assert "ExecStart=/opt/jobsearch-autopilot/scripts/server/run_service.sh" in text
+
+
+def test_display_units_restart_and_vnc_stays_local():
+    xvfb = (UNITS_DIR / "xvfb.service").read_text(encoding="utf-8")
+    assert "ExecStart=/usr/bin/Xvfb :99 " in xvfb and "Restart=always" in xvfb
+    vnc = (UNITS_DIR / "x11vnc.service").read_text(encoding="utf-8")
+    # VNC reachable only through an SSH tunnel and with a password
+    assert "-localhost" in vnc and "-rfbauth /root/.vnc/passwd" in vnc and "-display :99" in vnc
+    assert "BindsTo=xvfb.service" in vnc and "Restart=always" in vnc
+    assert all("WantedBy=multi-user.target" in t for t in (xvfb, vnc))
 
 
 def test_telegram_service_restarts_and_inbox_is_oneshot():

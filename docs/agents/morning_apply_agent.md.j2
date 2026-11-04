@@ -23,7 +23,7 @@
 - **Client status `{{ profile.status }}`.** `paused` on a manual run means an onboarding rehearsal (the operator started it deliberately): run all steps according to the `APPLY_MODE` rules, do not stop and do not ask for permission.
 - **The language of all mail is German:** drafts, replies, follow-ups, labels, and also the operator report (subject, metrics, section captions, texts). Ukrainian only in the tracker and in stdout.
 - **Accounts marked "deleting forbidden" (see above): NEVER delete anything.** Only reading, tracker updates, a reply in the thread if needed.
-- **Auto-application on portals ONLY via `bot.apply` (StepStone Schnelle Bewerbung, XING Easy Apply).** Never fill in forms by hand via Playwright MCP. LinkedIn Easy Apply and corporate ATS: only a link in the report.
+- **Auto-application ONLY through the engine:** `bot.apply` for StepStone Schnelle Bewerbung, XING Easy Apply and Interamt (Step 5); the browser worker's queue for corporate ATS, employer sites and LinkedIn (Easy Apply, or the employer's form behind LinkedIn's external Apply) and the employer's form of a StepStone/XING posting without quick apply (Step 5b). Never fill in forms by hand via Playwright MCP.
 - Every application is idempotent: before sending, check the tracker (company+role already there → skip); `bot.apply` checks `apply_result.json` itself.
 - Nationalität / Staatsangehörigkeit in any forms: **{{ profile.nationality }}**.
 - If `APPLY_MODE=dry-run` (env): a rehearsal, nothing goes out:
@@ -49,7 +49,7 @@ js scripts/session_health.py --json
 Returns `{"stepstone":"live|expired","xing":...,"linkedin":...}`. Remember it for the report (Step 9, the "sessions" line). Consequences of an expiry:
 - **xing**: `session_health` and `bot.apply` log in to XING themselves in their own browser (the profile's Google session or the credentials on the server), because a XING session does not survive a restart. A value like `expired:no_credentials:…` or `expired:failed:…` means auto-login is impossible → continue as below.
 - **stepstone/xing expired** → portal auto-application (`bot.apply`) on that site will fail with `login_required` → those jobs go to manual. In the report: the line "⚠️ session X expired, re-login needed (docs/server_setup.md §Re-login)".
-- **linkedin expired** → LinkedIn discover-liveness degrades (LinkedIn is link-only for applying anyway; it does not block auto, only the quality of the manual entries).
+- **linkedin expired** → the worker's LinkedIn applications stop with `login_required`: the worker switches LinkedIn off for the rest of the day, the LinkedIn leads stay in the queue and nothing is lost. Discover reads LinkedIn postings from the guest page without the login, so the alert intake keeps working. In the report: the line "⚠️ session LinkedIn expired, re-login needed (docs/server_setup.md §Re-login)".
 - The check is read-only, the profile does not mutate; do not run it if `apply_queue`/discover still holds the profile lock (safe here, before Step 5).
 
 ## Step 2: Load the evening artefacts
@@ -71,13 +71,23 @@ Merge, dedupe by `messageId`, take up to the **20 newest** (guard). Process only
 
 For each:
 1. `read_email` (mandatory, before any deletion).
-2. Extract the job links. **Stepstone digests:** their links are tracking redirects `click.stepstone.de/f/a/...`; put them into the urls file **as is**: `--discover` itself resolves them into the canonical stepstone.de URL. Do NOT treat them as unreliable, do NOT rewrite the leads into the manual list by "company+role": the Stepstone channel must go through discover→filter→`bot.apply` (it is the only channel with full auto-application). **XING digests:** the obfuscated `xing.com/m/...` links also go into the urls file **as is**: `resolve_xing_share()` in `--discover` resolves them into the canonical `/jobs/` URL without a browser UA, and unresolved /m/ links (interstitials, not jobs) are honestly discarded by the pipeline itself. XING = `xing_auto`, full auto-application; throwing these links into manual means losing an automated channel.
+2. Extract the job links. **Stepstone digests:** their links are tracking redirects `click.stepstone.de/f/a/...`; put them into the urls file **as is**: `--discover` itself resolves them into the canonical stepstone.de URL. Do NOT treat them as unreliable, do NOT rewrite the leads into the manual list by "company+role": the Stepstone channel must go through discover→filter→`bot.apply` (it is the only channel with full auto-application). **XING digests:** the obfuscated `xing.com/m/...` links also go into the urls file **as is**: `resolve_xing_share()` in `--discover` resolves them into the canonical `/jobs/` URL without a browser UA, and unresolved /m/ links (interstitials, not jobs) are honestly discarded by the pipeline itself. XING = `xing_auto`, full auto-application; throwing these links into manual means losing an automated channel. **LinkedIn job alerts:** the links `linkedin.com/comm/jobs/view/<id>/?trackingId=…` also go into the urls file **as is**: `--discover` turns every LinkedIn posting link into `https://www.linkedin.com/jobs/view/<id>` and reads the posting (title, company, location, full description) from LinkedIn's guest page. Do NOT put LinkedIn leads into the manual list and do NOT pick them by eye: they go through discover→filter→tailoring like StepStone and XING, and Step 5b queues them for the worker (filter channel `linkedin`).
 **Aggregator alerts (Talent.com / Jobijoba / Glassdoor):** their links are JS redirects (`de.talent.com/redirect?...`); httpx/discover does NOT unwind them. Do NOT dump such leads into manual and do NOT delete the email unprocessed: the email text has the role title + company + city. For the leads that pass the relevance filter (the client's tracks and locations), find the canonical URL via `mcp__perplexity__perplexity_search` (query: `"<Titel>" "<Firma>" <Stadt> Stellenangebot`, `country: "DE"`) or `mcp__firecrawl__firecrawl_scrape` of the aggregator page, and add the direct URL found to the same urls file for discover. Simply ignore irrelevant leads from aggregators (delete the alert as processed).
+**Indeed alerts** (`jobalert.indeed.com`, on jobs or main): `/viewjob` is behind Cloudflare, so Indeed links do NOT go into the urls file. For each Indeed job in the email that passes the relevance filter (the client's tracks and locations), add one object `{"url": "<the Indeed link>", "company": "<Firma>", "title": "<Stellentitel>", "city": "<Ort>"}` from the email text to the JSON list `var/run/indeed_leads_YYYY-MM-DD.json`. The resolver below finds these jobs on the employer's own site.
 3. Move this alert to the trash: `modify_email` with `removeLabelIds: ["INBOX"]`, `addLabelIds: ["TRASH"]` (one at a time). Do not use `delete_email`: the token has only gmail.modify, and the call fails with Insufficient Permission.
 
-New URLs → `var/run/urls_alerts_YYYY-MM-DD.txt` → `--discover` → `--filter` → tailoring of the new selected → add to the batch.
+New URLs → `var/run/urls_alerts_YYYY-MM-DD.txt` (today's date in every file name of this step). If `indeed_leads_YYYY-MM-DD.json` has entries, first resolve them: the script looks for each job on the employer's own site or ATS (checked: the page must name this job and this employer) and appends the page it finds to the urls file, so these jobs go through discover→filter→tailoring→email or queue like any employer posting:
+```bash
+js scripts/resolve_employer.py var/run/indeed_leads_YYYY-MM-DD.json --append var/run/urls_alerts_YYYY-MM-DD.txt
+```
+Only its `unresolved` list (also in `indeed_leads_YYYY-MM-DD.resolved.json`) goes to the manual list of the report, with the Indeed link and Firma/Stelle. Then →
+```bash
+js new_app.py --discover var/run/urls_alerts_YYYY-MM-DD.txt
+js -m bot.filters.rules var/run/discover_digest_YYYY-MM-DD.json -o var/run/filtered_alerts_YYYY-MM-DD.json
+```
+→ tailoring of the new selected by the rules of the evening run (one `{job, tailored}` per lead, `experience_variant` from `VARIANT_BY_CATEGORY`, umlauts) into `var/run/batch_alerts_YYYY-MM-DD.json`. Leave out a selected lead that the evening batch already holds (same `source_url`, or same company and role). Keep exactly these file names: Step 4 renders this batch, and Step 5b finds the leads and their Anschreiben by them.
 
-**Not scraped → manual (do not lose them).** `--discover` writes `var/run/discover_manual_YYYY-MM-DD.json`: links with `liveness ∈ {blocked, unknown}` (CAPTCHA/login-wall/cookie-wall; e.g. **Indeed is always here: its `/viewjob` CAPTCHAs automation**). The job may have been live, we just did not scrape it. Add these links to the **manual list of the report** (Step 9) with the direct URL; where you know the company/role from the alert email text, label them. Indeed is low priority, but we give the link and let the operator decide.
+**Not scraped → manual (do not lose them).** `--discover` writes `var/run/discover_manual_YYYY-MM-DD.json`: links with `liveness ∈ {blocked, unknown}` (CAPTCHA/login-wall/cookie-wall). The job may have been live, we just did not scrape it. Add these links to the **manual list of the report** (Step 9) with the direct URL; where you know the company/role from the alert email text, label them. Indeed links do not get here: they go through `resolve_employer.py` above.
 
 ### 3b. Draining the old backlog (inbox cleanup, does not feed the funnel)
 
@@ -94,14 +104,15 @@ In the report (Step 9, degraded block) state: **drained X old, ~Y left**, so tha
 ## Step 4: Render + email applications
 
 ```bash
-js new_app.py --batch-render var/run/batch_YYYY-MM-DD.json
+js new_app.py --batch-render var/run/batch_YYYY-MM-DD.json          # the evening batch (yesterday's date)
+js new_app.py --batch-render var/run/batch_alerts_YYYY-MM-DD.json   # the alert batch of Step 3a (today's date), if it exists
 ```
 Exit 4 = the text guard rejected some packages (the line `⛔ … транслітом замість ä/ö/ü/ß`), the rest were rendered. Do not queue the rejected ones: rewrite their `anschreiben`, `profile`, `kernkompetenzen` with umlauts into a new file `var/run/batch_fix_YYYY-MM-DD.json` containing only those packages and run `--batch-render` on it. If that fails, into the report as manual.
 For each package with `email_draft.json`: `mcp__gmail__send_email` (jobs) with the attachments from the draft. Immediately after each send, update this application's tracker row: status `sent`, date.
 
 ## Step 5: Portal auto-applications (StepStone/XING/Interamt) and the form worker queue
 
-Build the queue from selected where `apply_channel ∈ {stepstone_auto, xing_auto, interamt_auto}`:
+Build the queue from selected (yesterday's `filtered_*.json` and today's `filtered_alerts_*.json`) where `apply_channel ∈ {stepstone_auto, xing_auto, interamt_auto}`:
 `var/run/apply_queue_YYYY-MM-DD.json` as `[{"app_dir": "...", "url": source_url}]` (app_dir from the batch-render output).
 
 ```bash
@@ -109,20 +120,31 @@ js -m bot.apply.runner --batch var/run/apply_queue_YYYY-MM-DD.json
 ```
 (exit 3 = runaway guard → STOP, alert email, nothing submitted.)
 
-**5b. Corporate ATS and employer sites (`apply_channel == manual_link`) go to the queue of the browser
-worker**, which during the day (08:40–19:40) fills in and submits the forms itself on the server display, and hands
-a stuck form to the operator in Telegram:
+**5b. Corporate ATS, employer sites and LinkedIn (`apply_channel ∈ {manual_link, linkedin}`) go to the queue
+of the browser worker**, which during the day (08:40–19:40) fills in and submits the forms itself on the server
+display, and hands a stuck form to the operator in Telegram. A LinkedIn lead becomes `linkedin_easy` (Easy Apply
+on LinkedIn with the package's CV and Anschreiben) or `linkedin_offsite` (the worker opens the posting under the
+login, takes the external Apply link and fills the employer's form). The same queue takes the StepStone and
+XING leads the runner of Step 5 met as **external applications** (no Schnelle Bewerbung / Easy Apply, the
+posting applies on the employer's site): the worker fills the employer's form at the URL the runner recorded
+(`employer_url` in its result) or the one read from the posting page. So run this only after the runner has
+finished:
 
 ```bash
 js scripts/enqueue_leads.py --date YYYY-MM-DD
 ```
 (today's date: the packages are in `applications/YYYY-MM-DD/`; the script itself takes yesterday's
-`filtered_*.json` and today's `filtered_alerts_*.json`). The output `{"queued": {"form": N}, "held": [...],
-"skipped": [...]}` → one line in the report: "to the worker queue: N, held: M (reasons)". Nothing is submitted
-in this run; the tracker keeps these rows as "🔄 Файли готові", the worker itself moves them to
-`portal_submitted`. Do NOT put such jobs into the manual list of the report any more (only `held`, with the reason).
+`filtered_*.json` and today's `filtered_alerts_*.json`). The output `{"queued": {"form": N, "linkedin_easy": M,
+"linkedin_offsite": K}, "held": [...], "skipped": [...]}` → one line in the report: "to the worker queue: N
+(LinkedIn M+K), held: H (reasons)". Nothing is submitted in this run; the tracker keeps these rows as
+"🔄 Файли готові", the worker itself moves them to `portal_submitted`. Do NOT put queued jobs into the manual
+list of the report; only `held` ones go there, with the reason and the direct link. `platform_off:linkedin`
+means LinkedIn is not switched on for this client (`targeting.yaml → platforms.linkedin`): these are manual
+applications. `platform_limit_zero:linkedin` means it is switched on without `daily_limits.linkedin`: a config
+error, one line in the errors block. `no_employer_url` means a StepStone/XING posting whose employer apply link
+was found neither by the runner nor on the posting page: a manual application, give the posting link.
 
-Per the summary JSON update the tracker: `submitted` → status `portal_submitted (портал)` + the path to the confirmation screenshot in Notes; `login_required`/`captcha`/`form_unsupported`/`failed` → leave `ready`, the job goes to the manual list of the report. `login_required` → a separate line in the report: "re-login needed, see docs/server_setup.md". For `interamt` this is the EXPECTED state (the session is server-side and dies with a browser restart): in the report write "Interamt: application ready, a one-time login via VNC is needed, after that the bot does the rest", not as a failure.
+Per the runner's summary JSON (Step 5) update the tracker: `submitted` → status `portal_submitted (портал)` + the path to the confirmation screenshot in Notes; `login_required`/`captcha`/`form_unsupported`/`failed` → leave `ready`. `login_required`/`captcha`/`failed` go to the manual list of the report. `form_unsupported` with `external` in the reason (or a non-empty `employer_url`) is an external application that Step 5b hands to the worker: do NOT put it into the manual list unless 5b lists it under `held`. Any other `form_unsupported` (the portal's own form stopped half way, e.g. "submit disabled") goes to the manual list. `login_required` → a separate line in the report: "re-login needed, see docs/server_setup.md". For `interamt` this is the EXPECTED state (the session is server-side and dies with a browser restart): in the report write "Interamt: application ready, a one-time login via VNC is needed, after that the bot does the rest", not as a failure.
 
 ## Step 6: Processing replies
 
@@ -285,7 +307,7 @@ If the operator has to reply to the employer (for example consent on a portal pa
 ### 9c. «Zu tun» für den Operator (a file, not an email)
 
 Do NOT call `mcp__gmail__send_email` to {{ operator_email }} in this run, apart from the copy of 9b. Write an HTML fragment to `var/run/operator_todo_YYYY-MM-DD.html` (if a file for today exists, then `operator_todo_YYYY-MM-DD_HHMM.html`). After the run the wrapper itself adds to it the evening note about problems (if there was one), the alerts and **the list of manual applications from the tracker** (all `manual`/`ready` rows with links), and sends it to the operator only if there is something to do. So do NOT duplicate in the fragment what already stands in the tracker as `manual`/`ready`, but only:
-- manual leads that are not in the tracker (`discover_manual_*.json`: Indeed, captcha, login-wall) with direct links and a Firma/Stelle label where known;
+- manual leads that are not in the tracker (`discover_manual_*.json`: captcha, login-wall; the `unresolved` of `indeed_leads_*.resolved.json`) with direct links and a Firma/Stelle label where known;
 - for this run's manual applications, if an explanation is needed: what exactly is in the way (Konto nötig, Captcha, Formular) and where the package is (`applications/<date>/<folder>/`);
 - expired sessions (the line from Step 1.5) and what to do (re-login);
 - errors and degraded notes, the alert backlog drain, unmatched from cleanup, `--check-filter`;
@@ -356,7 +378,7 @@ Subject: `[{{ profile.first_name }}: Morgenbericht] YYYY-MM-DD: N Bewerbungen (E
 
 Send as **HTML**: `mimeType: "multipart/alternative"`, `htmlBody` following the template below, `body` a brief plain-text copy (fallback).
 {% endif %}
-Content (in this order): (1) the submitted email applications; (2) the portal submitted ones with the screenshot paths; (3) the **manual list** (LinkedIn/ATS/`login_required`/`captcha`/`form_unsupported` + `discover_manual_*.json`: blocked/unknown links, e.g. Indeed) with direct links; (4) replies rejected/confirmed/interview; (5) interviews (duplicate of Step 7); (6) the **cleanup block** from the Step 8 report: auto-ghosted N, folders deleted M, files rotated; `unmatched`/`errors` as a yellow block, only if non-empty; (6.5) the **"sessions" line** from Step 1.5: `St ✅ / XING ✅ / LI ✅` (expired ones in red + a line about the needed re-login); (7) errors/degraded notes + **♻️ if emails were restored from main-trash (Step 6.2): the line "restored N deleted replies" with the list of companies**.
+Content (in this order): (1) the submitted email applications; (2) the portal submitted ones with the screenshot paths; (3) the **manual list** (`held` leads of Step 5b with the reason, runner results `login_required`/`captcha`/`failed` and the `form_unsupported` ones that are not external applications, `discover_manual_*.json`: blocked/unknown links, and the `unresolved` of `indeed_leads_*.resolved.json`) with direct links; (4) replies rejected/confirmed/interview; (5) interviews (duplicate of Step 7); (6) the **cleanup block** from the Step 8 report: auto-ghosted N, folders deleted M, files rotated; `unmatched`/`errors` as a yellow block, only if non-empty; (6.5) the **"sessions" line** from Step 1.5: `St ✅ / XING ✅ / LI ✅` (expired ones in red + a line about the needed re-login); (7) errors/degraded notes + **♻️ if emails were restored from main-trash (Step 6.2): the line "restored N deleted replies" with the list of companies**.
 
 > **⚠️ Section (4) "replies": ONLY real incoming employer emails from `process-responses` (Step 6), each must have a Msg-ID in the mailbox (jobs or main).** A portal/on-submit confirmation of the application (join.com "sent", StepStone "Schnelle Bewerbung erfolgreich", an ATS "Vielen Dank für Ihre Bewerbung" on screen) is NOT a reply: it goes into section (2) "portal submitted", not (4), and does **not** count towards the "replies" counter. `confirmed` in (4) = a separate Eingangsbestätigung email was received. If there is no email, the status stays `portal_submitted`, not `confirmed`. **NEVER invent a Msg-ID: quote in the tracker only an ID actually obtained via `js scripts/gmail_rest.py get <acc> <id>` (or from `responses_*.json`). A Msg-ID that is not in the mailbox = fabrication, worse than an omission.**
 
@@ -404,8 +426,9 @@ Rules: inline CSS only (Gmail strips `<style>`), tables for layout, maximum 640p
 ```bash
 git add -A tracker.md applications/
 git commit -m "{{ slug }}: morning run YYYY-MM-DD — N applications, M responses"
-git pull --rebase && git push
+git pull --no-rebase --no-edit && git push
 ```
+A merge, not a rebase: package files of other clients that the browser worker left uncommitted stay as they are, and `git pull --rebase` refuses such a working tree.
 The generated PDF/DOCX do not go into git (the data repository's `.gitignore`): the package is reproduced from `generate.py`. Committed are `generate.py`, `email_draft.json`, `apply_result.json`, the confirmation screenshots and the tracker.
 (`-A` is mandatory: cleanup deletes folders, and the deletions must also get into the commit.)
 At the end of stdout: `MORNING OK: email=X portal=Y manual=Z responses=R interviews=I`.

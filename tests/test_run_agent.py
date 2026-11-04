@@ -66,8 +66,10 @@ def sandbox(tmp_path):
     _executable(engine / ".venv" / "bin" / "python", FAKE_PYTHON)
     # macOS без flock: підробка в $ENGINE/bin, який обгортка ставить на початок PATH;
     # аргументи лягають у той самий журнал, що й виклики підробленого python
+    # `flock -w N FILE CMD...` runs CMD like the real flock; `flock -w N FD` only takes the lock
     _executable(engine / "bin" / "flock",
-                "#!/bin/bash\nprintf 'flock %s\\n' \"$*\" >> \"$FAKE_PY_LOG\"\nexit 0\n")
+                "#!/bin/bash\nprintf 'flock %s\\n' \"$*\" >> \"$FAKE_PY_LOG\"\n"
+                "if [ \"$#\" -gt 3 ]; then shift 3; exec \"$@\"; fi\nexit 0\n")
     clients = tmp_path / "clients"
     clients.mkdir()
     env = {
@@ -98,7 +100,7 @@ def test_failed_data_pull_alerts_operator(sandbox):
     _, clients, run = sandbox
     root = clients / "jordan"
     root.mkdir()
-    _git(root, "init", "-q")            # без upstream: `git pull --rebase` падає
+    _git(root, "init", "-q")            # no upstream: `git pull` fails
 
     proc, calls, log = run("jordan")
 
@@ -122,6 +124,21 @@ def test_successful_data_pull_sends_no_alert(sandbox):
     assert "data git pull failed" not in log
     assert _alerts(calls) == []
     assert any(c.endswith("render_run.py evening --check") for c in calls), calls
+
+
+def test_data_pull_passes_a_package_file_the_worker_left_modified(sandbox):
+    """02.11.2026: between runs the browser worker rewrites committed package files (apply_result.json,
+    screenshots, lead.json); `pull --rebase` refused such a tree and the run went on local state."""
+    tmp, clients, run = sandbox
+    _repo_with_origin(tmp, "jordan", {"tracker.md": "# tracker\n", "applications/a/lead.json": "{}\n"})
+    (tmp / "jordan").rename(clients / "jordan")
+    (clients / "jordan" / "applications" / "a" / "lead.json").write_text('{"apply_url": "x"}\n', encoding="utf-8")
+
+    proc, calls, log = run("jordan")
+
+    assert proc.returncode == 0, proc.stderr
+    assert "data git pull failed" not in log
+    assert _alerts(calls) == []
 
 
 def test_failed_engine_pull_alerts_operator(sandbox):
@@ -149,4 +166,6 @@ def test_lock_is_awaited_not_skipped(sandbox):
 
     assert proc.returncode == 0, proc.stderr
     flock_calls = [c for c in calls if c.startswith("flock ")]
-    assert flock_calls == ["flock -w 900 9"]
+    assert [c for c in flock_calls if "jobsearch-sync.lock" not in c] == ["flock -w 900 9"]
+    # the data pull waits for the same sync lock as the hourly services (scripts/inbox_watch.repo_lock)
+    assert any(c.startswith("flock -w 120 ") and c.endswith("pull --no-rebase --no-edit") for c in flock_calls)

@@ -53,6 +53,15 @@ def test_auto_ghost_after_45_days(tmp_path):
     assert " 2026-07-14 " in text
 
 
+def test_auto_ghost_clears_the_next_action(tmp_path):
+    tracker = make_tracker(tmp_path, [
+        row(1, "2026-05-01", "Alte GmbH", "Junior BA", "sent", "2026-05-20").replace(
+            "| — |", "| Follow-up якщо тиша до 2026-06-03 |"),
+    ])
+    auto_ghost(tracker, TODAY)
+    assert "| ghosted | 2026-07-14 | — |" in tracker.read_text()
+
+
 def test_auto_ghost_recent_untouched(tmp_path):
     tracker = make_tracker(tmp_path, [
         row(1, "2026-06-20", "Fresh AG", "Junior BA", "confirmed", "2026-06-25"),

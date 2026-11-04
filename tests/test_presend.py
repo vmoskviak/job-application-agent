@@ -187,6 +187,22 @@ def test_platform_off_holds_linkedin_easy_but_not_form(pkg, tracker):
     assert _check(pkg, tracker, platforms={}) == []
 
 
+def test_platform_without_daily_limit_holds(pkg, tracker):
+    """A platform switched on or shadow with no daily limit: the worker's limit is 0, so the lead
+    would sit queued for ever. The reason makes the missing daily_limits.<platform> visible."""
+    pkg.channel, pkg.apply_url = "linkedin_easy", "https://www.linkedin.com/jobs/view/1/"
+    on = {"linkedin": "on"}
+    assert "platform_limit_zero:linkedin" in _check(pkg, tracker, platforms=on, limits={"form": 5})
+    assert "platform_limit_zero:linkedin" in _check(pkg, tracker, platforms={"linkedin": "shadow"},
+                                                    limits={"linkedin": 0})
+    assert _check(pkg, tracker, platforms=on, limits={"linkedin": 5}) == []
+    assert _check(pkg, tracker, platforms=on) == []    # without limits nothing changes (old callers)
+    # platform off: one reason, platform_off, not both
+    assert _check(pkg, tracker, platforms={}, limits={}) == ["platform_off:linkedin"]
+    pkg.channel, pkg.apply_url = "form", "https://boards.greenhouse.io/contractco/jobs/123"
+    assert _check(pkg, tracker, platforms={}, limits={}) == []
+
+
 def test_platform_lead_tracker_duplicate_only_by_url(pkg, tmp_path):
     tracker = tmp_path / "tracker_gulp.md"
     tracker.write_text(HEADER + "| 1 | 2026-10-20 | Agency One (GULP) | Android Dev | contract: gulp |  | sent "

@@ -36,10 +36,13 @@ log = logging.getLogger(__name__)
 
 PORTAL = "linkedin"
 
-# Контрол Apply на сторінці вакансії, єдиний на сторінці: <button> для Easy Apply,
-# <a href=".../safety/go/?url=…"> для подачі на сайті компанії.
-EASY_APPLY_SELECTOR = 'button[data-view-name="job-apply-button"]'
-OFFSITE_SELECTOR = 'a[data-view-name="job-apply-button"]'
+# The Apply control of the job page: a <button> for Easy Apply, an <a href=".../safety/go/?url=…">
+# for applying on the company site. Since 29.10.2026 LinkedIn also serves a variant without
+# data-view-name (seen on an Easy Apply and an offsite job): only the aria-label tells them apart.
+EASY_APPLY_SELECTOR = ('button[data-view-name="job-apply-button"], '
+                       'button[aria-label^="Easy Apply to"]')
+OFFSITE_SELECTOR = ('a[data-view-name="job-apply-button"], '
+                    'a[aria-label="Apply on company website"]')
 MODAL_SELECTOR = "dialog[open]"
 
 # Кнопки модалки за data-view-name; тексти лише запасний шлях.
@@ -50,7 +53,9 @@ NEXT_TEXTS = ("Next", "Weiter")
 REVIEW_TEXTS = ("Review", "Überprüfen")
 SUBMIT_TEXTS = ("Submit application", "Bewerbung senden")
 # Збереженого резюме не вибираємо: input[type=file] нема, кнопка відкриває file chooser.
-UPLOAD_RESUME_SELECTOR = f'{MODAL_SELECTOR} button[data-view-name="upload-document-unify"]'
+UPLOAD_RESUME_SELECTOR = (f'{MODAL_SELECTOR} button[data-view-name="upload-document-unify"], '
+                          f'{MODAL_SELECTOR} button:has-text("Upload resume"), '
+                          f'{MODAL_SELECTOR} button:has-text("Lebenslauf hochladen")')
 # «Follow <company>…» на кроці Review, увімкнено за замовчуванням: клік вимикає.
 FOLLOW_CHECKBOX_SELECTOR = (
     f'{MODAL_SELECTOR} div[role=checkbox][data-view-name="follow-company-unify"][aria-checked="true"]'
@@ -81,6 +86,21 @@ _SIGN_IN_RE = re.compile(r"\bSign in\b")
 _NAV_ME_RE = re.compile(r"\bMe\b")
 
 # Текст помилки під полем модалки («Invalid input») разом із підписом поля.
+# The modal's step: progress «3/4 pages» plus the ids of its fields. A changed marker after
+# Next means LinkedIn accepted the step, so nothing on the new step is a validation error.
+STEP_MARKER_JS = r"""
+(() => {
+  const d = document.querySelector("dialog[open]");
+  if (!d) return "";
+  const m = (d.innerText || "").match(/(\d+)\s*\/\s*(\d+)\s*(?:pages|seiten)/i);
+  const ids = Array.from(d.querySelectorAll("input,select,textarea")).map((e) => e.id || e.name || "").join(",");
+  return (m ? m[0] : "") + "|" + ids;
+})()
+"""
+# A character counter under a field («0/20», «0 of 20 characters»), not an error.
+_COUNTER_RE = re.compile(r"\s*\d+\s*/\s*\d+(?:\s+\d+\s+(?:of|von)\s+\d+\s+(?:characters|zeichen))?\s*",
+                         re.IGNORECASE)
+
 HELPER_ERRORS_JS = r"""
 (() => {
   const out = [];
@@ -98,9 +118,29 @@ HELPER_ERRORS_JS = r"""
 """
 
 GOTO_TIMEOUT_MS = 30000
+# LinkedIn date questions take the UI locale's format: 2026-11-12 is rejected on an English UI.
+LANG_JS = "document.documentElement.lang || ''"
+_DATE_FORMATS = {"en": "%m/%d/%Y", "de": "%d.%m.%Y"}
 APPLY_WAIT_MS = 15000
 SETTLE_MS = 2000
 STEP_SETTLE_MS = 800
+# After Next/Review the step marker is polled this long before the step counts as not advanced.
+STEP_ADVANCE_WAIT_MS = 4000
+# Error-looking texts in the modal when a step does not advance and no field helper explains why.
+STUCK_ERRORS_JS = r"""
+(() => {
+  const d = document.querySelector("dialog[open]");
+  if (!d) return [];
+  const re = /required|invalid|erforderlich|ungültig|pflichtfeld|bitte/i;
+  const out = [];
+  d.querySelectorAll("span, div, p").forEach((e) => {
+    if (e.children.length) return;
+    const t = (e.innerText || "").replace(/\s+/g, " ").trim();
+    if (t && t.length < 120 && re.test(t) && !out.includes(t)) out.push(t);
+  });
+  return out;
+})()
+"""
 MODAL_WAIT_MS = 15000
 SUBMIT_WAIT_MS = 30000
 POLL_MS = 1000
@@ -136,15 +176,24 @@ def _open(page, url: str) -> None:
 
 
 def resolve_offsite(page, url: str) -> tuple[str, str | None]:
-    """Стан вакансії і зовнішнє посилання Apply (лише якір job-apply-button, ніколи
-    перше safety/go на сторінці); посилання None, якщо стан не open чи якоря нема."""
+    """State of the posting and the external Apply link (only the job-apply-button anchor, never
+    the first safety/go on the page); the link is None when the state is not open or there is no anchor.
+
+    No external anchor but the Easy Apply button: state "easy_apply". The enqueue resolver
+    reads the guest page without a login; when LinkedIn does not serve it (rate limit, auth
+    wall) it cannot tell Easy Apply from an external Apply and queues linkedin_offsite. The
+    page under the login knows, and the worker applies with Easy Apply instead of holding the lead."""
     _open(page, url)
     state = page_state(page.url, page.inner_text("body"))
     if state != "open":
         return state, None
     anchor = page.locator(OFFSITE_SELECTOR)
-    href = anchor.first.get_attribute("href") if anchor.count() else None
-    return state, decode_safety_url(href) if href else None
+    if anchor.count():
+        href = anchor.first.get_attribute("href")
+        return state, decode_safety_url(href) if href else None
+    if page.locator(EASY_APPLY_SELECTOR).count():
+        return "easy_apply", None
+    return state, None
 
 
 def _modal_text(page) -> str:
@@ -196,17 +245,55 @@ def _helper_texts(page) -> list[str]:
             for e in page.evaluate(HELPER_ERRORS_JS) or []]
 
 
-def _validation(page, base_helpers: list[str], base_errors: list[str], base_invalid: int) -> list[str]:
-    """Помилки після Next/Review: нові тексти під полями (підказки й лічильники, що були
-    до кліку, не рахуються), інакше нові помилки чи більше aria-invalid з PROBE_JS."""
-    helper = [t for t in _helper_texts(page) if t not in base_helpers]
+def _date_format(page) -> str:
+    try:
+        lang = str(page.evaluate(LANG_JS) or "").lower()[:2]
+    except Exception:  # noqa: BLE001 - no language: the ISO date stays
+        return ""
+    return _DATE_FORMATS.get(lang, "")
+
+
+def _step_marker(page) -> str:
+    try:
+        return str(page.evaluate(STEP_MARKER_JS) or "")
+    except Exception:  # noqa: BLE001 - modal re-rendering: no marker, fall back to the error checks
+        return ""
+
+
+def _validation(page, base_helpers: list[str], base_errors: list[str], base_invalid: int,
+                base_marker: str = "") -> list[str]:
+    """Errors after Next/Review. None when the step changed (LinkedIn moved on, so nothing was
+    rejected); otherwise new texts under fields (hints present before the click and character
+    counters do not count), new PROBE_JS errors or more aria-invalid fields. A step that keeps its
+    marker for STEP_ADVANCE_WAIT_MS with none of those is still an error: LinkedIn refused it
+    (a required radio shows its message outside the field helpers) and another click loops."""
+    if base_marker:
+        waited = 0
+        while True:
+            now = _step_marker(page)
+            if now not in ("", base_marker):
+                return []
+            if waited >= STEP_ADVANCE_WAIT_MS:
+                break
+            page.wait_for_timeout(500)
+            waited += 500
+    helper = [t for t in _helper_texts(page)
+              if t not in base_helpers and not _COUNTER_RE.fullmatch(t.rsplit(": ", 1)[-1])]
     if helper:
         return helper
     errors, invalid = _probe_errors(page)
     fresh = [t for t in errors if t not in base_errors]
     if fresh:
         return fresh
-    return [f"{invalid} invalid"] if invalid > base_invalid else []
+    if invalid > base_invalid:
+        return [f"{invalid} invalid"]
+    if base_marker and _step_marker(page) == base_marker:
+        try:
+            stuck = [str(t) for t in page.evaluate(STUCK_ERRORS_JS) or []]
+        except Exception:  # noqa: BLE001 - the reason is a hint for the operator only
+            stuck = []
+        return stuck or ["step did not advance"]
+    return []
 
 
 def _css_string(value: str) -> str:
@@ -214,8 +301,11 @@ def _css_string(value: str) -> str:
 
 
 def resume_radio_selector(file_name: str) -> str:
-    """Вибраний файл у списку резюме модалки: div[role=radio] з aria-label = ім'я файлу."""
-    return f'{MODAL_SELECTOR} div[role=radio][aria-label={_css_string(file_name)}][aria-checked="true"]'
+    """The selected file in the modal's resume list: div[role=radio] with aria-label = file name, or in
+    the variant without data-view-name a checked input[type=radio] with that aria-label."""
+    name = _css_string(file_name)
+    return (f'{MODAL_SELECTOR} div[role=radio][aria-label={name}][aria-checked="true"], '
+            f'{MODAL_SELECTOR} input[type=radio][aria-label={name}]:checked')
 
 
 def _upload_resume(page, resume: Path) -> Literal["", "selected", "not_selected"]:
@@ -297,6 +387,7 @@ def easy_apply(page, url: str, ctx: AnswerContext, llm: LLM | None, brief: str, 
             return result("handoff", reason="no_easy_apply")
         apply_btn.first.click(timeout=5000)
         page.wait_for_selector(MODAL_SELECTOR, timeout=MODAL_WAIT_MS)
+        date_format = _date_format(page)
 
         for n in range(1, max_steps + 1):
             page.wait_for_timeout(STEP_SETTLE_MS)
@@ -309,7 +400,8 @@ def easy_apply(page, url: str, ctx: AnswerContext, llm: LLM | None, brief: str, 
             if upload == "selected":
                 total.uploaded.append("Resume")
                 resume_uploaded = True
-            rep = fill_form(page, ctx, llm, brief, max_llm=max(0, MAX_LLM - total.llm_calls), root=MODAL_SELECTOR)
+            rep = fill_form(page, ctx, llm, brief, max_llm=max(0, MAX_LLM - total.llm_calls), root=MODAL_SELECTOR,
+                            date_format=date_format)
             total.filled += rep.filled
             total.uploaded += rep.uploaded
             total.llm_calls += rep.llm_calls
@@ -340,9 +432,10 @@ def easy_apply(page, url: str, ctx: AnswerContext, llm: LLM | None, brief: str, 
                 return result("handoff", reason="no_next_button")
             base_helpers = _helper_texts(page)
             base_errors, base_invalid = _probe_errors(page)
+            base_marker = _step_marker(page)
             nxt.click(timeout=5000)
             page.wait_for_timeout(STEP_SETTLE_MS)
-            errors = _validation(page, base_helpers, base_errors, base_invalid)
+            errors = _validation(page, base_helpers, base_errors, base_invalid, base_marker)
             if errors:
                 return result("handoff", reason="validation: " + "; ".join(errors))
         return result("handoff", reason="too_many_steps")

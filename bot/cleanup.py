@@ -118,6 +118,7 @@ def auto_ghost(tracker_path: Path, today: date,
         if row.kind == "main":
             cells[7] = " ghosted "
             cells[8] = f" {today.isoformat()} "
+            cells[9] = " — "   # the follow-up it waited for is over
         else:
             cells[4] = f" ghosted ({today.isoformat()}) "
         if not dry_run:

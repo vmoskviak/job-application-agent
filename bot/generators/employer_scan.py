@@ -37,6 +37,7 @@ ATS_DOMAINS: tuple[str, ...] = (
     "greenhouse.io",
     "smartrecruiters.com",
     "recruitee.com",
+    "recruitee-email.com",
     "join.com",
     "instaffo.com",
     # контрактний ринок: ATS англомовних роботодавців (сповіщення з окремих доменів)
@@ -257,7 +258,10 @@ NON_EMPLOYER_DOMAINS: frozenset[str] = frozenset({
     "hokify.de", "jobware.de", "monster.de", "kununu.com", "meinestadt.de",
     "jobs.de", "gulp.de", "freelancermap.de", "freelance.de", "malt.de",
     "upwork.com", "ycombinator.com", "google.com", "goo.gl", "bit.ly",
-    "github.com", "rp-online.de", "stellenanzeigen.de", "yourjob.de",
+    "github.com", "rp-online.de", "stellenanzeigen.de", "yourjob.de", "kimeta.de", "jobexport.de",
+    # Aggregators the employer lookup met on 02.11.2026 and their usual peers: never the employer.
+    "medjobs.de", "jooble.org", "simplyhired.de", "simplyhired.com", "getbaito.com", "jobted.de", "adzuna.de", "careerjet.de", "stellenonline.de", "absolventa.de", "jobvector.de", "heyjobs.co", "heyjobs.de", "joblift.de", "jobrapido.com", "stellenmarkt.de", "gigajob.de", "jobsintown.de", "jobsora.com", "trovit.de", "karriere.at", "jobs.ch", "jobup.ch",
+    "bebee.com",
 })
 
 # Поштові сервіси: from:<домен> означав би всю пошту, тож тут лише повна адреса.

@@ -5,14 +5,15 @@ fill/check/click, тож повторне читання після проход
 Пошуки кнопок, опцій комбобокса й посилання Apply змодельовано мінімально.
 """
 import re
+from dataclasses import replace
 from datetime import date
 
 import pytest
 
 from bot import client
+from bot.apply import ats_form
 from bot.apply.ats_answers import AnswerContext
 from bot.apply.ats_detect import PROBE_JS
-from bot.apply import ats_form
 from bot.apply.ats_fields import FIELD_JS, FIELD_SELECTOR
 from bot.apply.ats_form import (
     POLL_MS,
@@ -23,6 +24,7 @@ from bot.apply.ats_form import (
     field_selector,
     fill_form,
     form_url,
+    pick_apply,
     probe,
     submit,
 )
@@ -34,10 +36,10 @@ PRE_SUBMIT = {"submit_visible": True, "challenge_visible": False, "invalid_count
 
 
 def _f(i, label, type="text", tag="input", required=False, visible=True, value="", options=None,
-       group="", combobox=False, id="", name=""):
+       group="", combobox=False, id="", name="", **extra):
     return {"i": i, "tag": tag, "type": type, "name": name, "id": id, "required": required, "label": label,
             "placeholder": "", "visible": visible, "value": value, "options": options, "group": group,
-            "combobox": combobox}
+            "combobox": combobox, **extra}
 
 
 def _key(d):
@@ -187,7 +189,10 @@ class FakePage:
         self.fields_after_apply = None
         self.apply_clicks = 0
         self.apply_selector = GH_APPLY
+        self.apply_buttons = ["Apply"]   # visible buttons the opener sees while fields_after_apply is pending
+        self.apply_clicked: list[str] = []
         self.clicked_submit = False
+        self.submit_clicks: list[int] = []   # indexes into buttons, in click order
         self.probe_after_submit = dict(PRE_SUBMIT)
         self.shots: list[str] = []
         self.hooks: dict = {}            # (дія, id поля) → функція(page)
@@ -229,9 +234,18 @@ class FakePage:
     def evaluate(self, js):
         if js == FIELD_JS:
             self.reads += 1
+            if self.form_never_appears:
+                return []
             if not self.waits:
                 self.reads_before_wait += 1
             return [dict(d) for d in self.fields]
+        if js == ats_form.CANDIDATES_JS:
+            if self.fields_after_apply is None or self.apply_clicks:
+                return []
+            return [{"i": k, "text": t, "href": "", "target": "", "tag": "button"}
+                    for k, t in enumerate(self.apply_buttons)]
+        if js == ats_form.SUBMIT_JS:
+            return [self._submit_cand(k, b) for k, b in enumerate(self.buttons)]
         if js == PROBE_JS:
             if self.probe_errors:
                 self.probe_errors -= 1
@@ -257,8 +271,14 @@ class FakePage:
             wanted = set(has.items) if has is not None else set()
             hits = [u for u, q in self.yesno.items() if q["question"] in wanted]
             return YesNoBox(self, hits[0]) if hits else Clickable(self, [], lambda x: None)
-        if sel == self.apply_selector and self.fields_after_apply is not None:
-            return Clickable(self, ["Apply"], self._apply_click)
+        m = re.fullmatch(r'\[data-js-submit="(\d+)"\]', sel)
+        if m:
+            k = int(m.group(1))
+            return Clickable(self, [self._submit_cand(k, self.buttons[k])["text"]],
+                             lambda text, k=k: (self.submit_clicks.append(k), self._button_click(text)))
+        m = re.fullmatch(r'\[data-js-cand="(\d+)"\]', sel)
+        if m and self.fields_after_apply is not None:
+            return Clickable(self, [self.apply_buttons[int(m.group(1))]], self._apply_click)
         return Clickable(self, [], lambda x: None)   # cookie-банерів немає
 
     def get_by_role(self, role, name=None):
@@ -268,11 +288,20 @@ class FakePage:
     def get_by_text(self, text, exact=False):
         return EmptyBox()
 
+    @staticmethod
+    def _submit_cand(k, b):
+        """A button as SUBMIT_JS returns it; a plain string is a button outside any form."""
+        d = {"text": b} if isinstance(b, str) else dict(b)
+        return {"i": k, "text": d["text"], "submit_type": d.get("submit_type", False),
+                "in_form": d.get("in_form", False), "other_form": d.get("other_form", False),
+                "disabled": d.get("disabled", False)}
+
     def _button_click(self, text):
         self.clicked_submit = True
 
-    def _apply_click(self, _):
+    def _apply_click(self, text):
         self.apply_clicks += 1
+        self.apply_clicked.append(text)
         self.fields = self.fields_after_apply
 
     def wait_for_timeout(self, ms):
@@ -408,6 +437,32 @@ def test_llm_only_when_allowed(fake_page_with_why, ctx):
     assert fake_page_with_why.filled["Additional Information"] == ctx.note   # нотатка йде лише в одне поле
 
 
+def test_generic_message_box_gets_the_note_without_a_model_call(ctx):
+    """30.10.2026, a German landing-page form: Name, E-Mail, Telefon, «Nachricht», a file upload. The
+    message box takes the cover note; the model is not asked."""
+    page = FakePage([
+        _f(0, "Name", required=True, id="name"),
+        _f(1, "E-Mail", type="email", required=True, id="mail"),
+        _f(2, "Telefon", type="tel", id="tel"),
+        _f(3, "Nachricht", type="textarea", tag="textarea", id="msg"),
+        _f(4, "Datei", type="file", id="file"),
+    ])
+    llm = FakeLLM("Ich habe Erfahrung.")
+    rep = fill_form(page, ctx, llm=llm, brief="brief")
+    assert page.filled["Nachricht"] == ctx.note and llm.prompts == [] and rep.llm_calls == 0
+
+
+def test_meta_reply_from_the_model_is_not_typed(ctx):
+    """A model reply that asks back or echoes the rules leaves the field open: a hand-off, not a typed meta text."""
+    q = "Tell us about a project you are proud of."
+    page = FakePage(base_fields() + [_f(7, q, type="textarea", tag="textarea", required=True)])
+    reply = ("Поле не містить конкретного питання, уточніть, що саме написати. Формат відповіді: "
+             "німецькою, до 600 знаків, plain text.")
+    llm = FakeLLM(reply)
+    rep = fill_form(page, ctx, llm=llm, brief="brief")
+    assert rep.llm_calls == 1 and q not in page.filled and rep.open_required == [q]
+
+
 def test_llm_budget_and_no_llm_for_identity(ctx):
     fs = base_fields() + [
         _f(7 + k, f"Question number {k} about your experience with large teams?", required=True) for k in range(4)
@@ -523,6 +578,81 @@ def test_submit_short_word_is_exact():
     page._button_click = clicked.append
     submit(page)
     assert clicked == ["Apply"]
+
+
+def _clicks(page):
+    clicked = []
+    page._button_click = clicked.append
+    submit(page)
+    return clicked
+
+
+def test_final_submit_wins_over_the_opener_above_the_form():
+    """«Jetzt bewerben» is also the opener above a form or a sticky header button: the final text wins."""
+    assert _clicks(FakePage([], buttons=("Jetzt bewerben", "Absenden"))) == ["Absenden"]
+    assert _clicks(FakePage([], buttons=("Jetzt bewerben", "Senden"))) == ["Senden"]
+    assert _clicks(FakePage([], buttons=("Jetzt bewerben", "Bewerbung jetzt absenden"))) == ["Bewerbung jetzt absenden"]
+    assert _clicks(FakePage([], buttons=("Apply now", "Submit your application"))) == ["Submit your application"]
+
+
+def test_submit_button_of_the_filled_form_wins():
+    """A type=submit button inside the form that holds the filled fields beats any text elsewhere."""
+    page = FakePage([], buttons=("Absenden", {"text": "Jetzt bewerben", "submit_type": True, "in_form": True}))
+    assert _clicks(page) == ["Jetzt bewerben"]
+    page = FakePage([], buttons=("Jetzt bewerben", {"text": "Los geht's", "submit_type": True, "in_form": True}))
+    assert _clicks(page) == ["Los geht's"]
+
+
+def test_apply_text_inside_the_form_wins_over_the_same_text_outside():
+    page = FakePage([], buttons=("Jetzt bewerben", {"text": "Jetzt bewerben", "in_form": True}))
+    _clicks(page)
+    assert page.submit_clicks == [1]
+
+
+def test_buttons_of_another_form_are_never_the_submit():
+    """A newsletter or search form next to the application: its «Senden» would send that form."""
+    page = FakePage([], buttons=({"text": "Senden", "other_form": True}, {"text": "Bewerben", "in_form": True}))
+    assert _clicks(page) == ["Bewerben"]
+
+
+def test_social_apply_buttons_are_never_the_submit():
+    page = FakePage([], buttons=("Mit XING jetzt bewerben", "Mit LinkedIn bewerben", "Apply with Indeed",
+                                 "Sign in with Google", "Continue with Apple",
+                                 {"text": "Mit XING bewerben", "submit_type": True, "in_form": True}))
+    with pytest.raises(LookupError):
+        ats_form.find_submit(page)
+    page.buttons.append("Bewerben")
+    assert _clicks(page) == ["Bewerben"]
+
+
+def test_next_step_upload_and_share_buttons_are_not_a_submit():
+    page = FakePage([], buttons=({"text": "Weiter", "submit_type": True, "in_form": True},
+                                 {"text": "Lebenslauf hochladen", "submit_type": True, "in_form": True},
+                                 "Code senden", "Job per E-Mail senden", "Bewerbung starten"))
+    with pytest.raises(LookupError):
+        ats_form.find_submit(page)
+
+
+def test_enabled_submit_wins_over_a_disabled_twin():
+    page = FakePage([], buttons=({"text": "Absenden", "disabled": True}, "Absenden"))
+    _clicks(page)
+    assert page.submit_clicks == [1]
+
+
+def test_disabled_submit_is_handoff_without_a_click(fake_page, ctx, tmp_path):
+    """A disabled button means the page still misses something; a click would only time out after
+    the attempt counted as a submission."""
+    fake_page.buttons = [{"text": "Bewerbung absenden", "disabled": True}]
+    res = apply(fake_page, "https://careers.example.com/job/1", ctx, None, "", tmp_path, dry_run=False, wait_ms=0)
+    assert res.status == "handoff" and res.reason == "submit_disabled" and not fake_page.clicked_submit
+
+
+def test_opener_above_the_form_is_not_pressed_live(fake_page, ctx, tmp_path):
+    fake_page.buttons = ["Jetzt bewerben", {"text": "Absenden", "submit_type": True, "in_form": True}]
+    fake_page.probe_after_submit = {"submit_visible": False, "challenge_visible": False, "invalid_count": 0,
+                                    "error_texts": [], "text": "Vielen Dank für Ihre Bewerbung"}
+    apply(fake_page, "https://careers.example.com/job/1", ctx, None, "", tmp_path, dry_run=False, wait_ms=0)
+    assert fake_page.submit_clicks == [1]
 
 
 def test_probe_reads_text(fake_page):
@@ -656,31 +786,100 @@ def test_lever_and_workable_urls_open_apply_page(fake_page, ctx, tmp_path):
     assert fake_page.visited[-1] == "https://apply.workable.com/contractco/j/ABC123/apply/"
 
 
-def test_form_wait_precedes_first_read(fake_page, ctx, tmp_path):
-    apply(fake_page, "https://jobs.ashbyhq.com/contractco/1/application", ctx, None, "", tmp_path, dry_run=True)
-    assert fake_page.waits == [FORM_READY] and fake_page.reads_before_wait == 0 and fake_page.reads > 0
+def test_ready_form_is_read_without_clicks(fake_page, ctx, tmp_path):
+    res = apply(fake_page, "https://jobs.ashbyhq.com/contractco/1/application", ctx, None, "", tmp_path, dry_run=True)
+    assert res.status == "dry_run" and fake_page.apply_clicks == 0
 
 
-def test_greenhouse_waits_then_clicks_apply_then_waits_for_form(ctx, tmp_path):
+def test_greenhouse_clicks_apply_then_reads_form(ctx, tmp_path):
     page = FakePage([_f(0, "Search jobs")])
     page.fields_after_apply = base_fields()
     res = apply(page, "https://job-boards.greenhouse.io/contractco/jobs/1", ctx, None, "", tmp_path, dry_run=True)
-    assert page.apply_clicks == 1 and res.status == "dry_run" and page.reads_before_wait == 0
-    assert page.waits == [f"{FORM_READY}, {GH_APPLY}", FORM_READY]
+    assert page.apply_clicks == 1 and res.status == "dry_run"
 
 
 def test_unknown_ats_clicks_generic_apply_link(ctx, tmp_path):
     page = FakePage([_f(0, "Search jobs")])
-    page.apply_selector = ANY_APPLY
     page.fields_after_apply = base_fields()
     res = apply(page, "https://careers.example.com/job/1", ctx, None, "", tmp_path, dry_run=True)
     assert page.apply_clicks == 1 and res.status == "dry_run" and page.visited == ["https://careers.example.com/job/1"]
 
 
+def test_im_interested_button_opens_form(ctx, tmp_path):
+    """SmartRecruiters: the form sits behind "I'm interested", next to "Refer a friend"."""
+    page = FakePage([])
+    page.apply_buttons = ["Refer a friend", "I\u2019m interested", "Share"]
+    page.fields_after_apply = base_fields()
+    res = apply(page, "https://jobs.example-ats.com/contractco/1", ctx, None, "", tmp_path, dry_run=True)
+    assert page.apply_clicked == ["I\u2019m interested"] and res.status == "dry_run"
+
+
+def test_zero_size_form_and_search_box_are_not_a_form(ctx, tmp_path):
+    """Recruitee: a zero-size <form> and a search box sit on the job page; the opener must still click Bewerben."""
+    page = FakePage([_f(0, "", type="hidden", visible=False), _f(1, "Search")])
+    page.apply_buttons = ["Jobdetails", "Bewerben", "Job teilen"]
+    page.fields_after_apply = base_fields()
+    res = apply(page, "https://contractco.example-ats.com/o/android", ctx, None, "", tmp_path, dry_run=True)
+    assert page.apply_clicked == ["Bewerben"] and res.status == "dry_run"
+
+
+def test_form_in_hidden_tab_is_not_ready(ctx, tmp_path):
+    """Recruitee renders the whole form inside a display:none tab on the job page."""
+    hidden = [{**d, "visible": False} for d in base_fields()]
+    page = FakePage(hidden)
+    page.apply_buttons = ["Bewerben"]
+    page.fields_after_apply = base_fields()
+    res = apply(page, "https://contractco.example-ats.com/o/android", ctx, None, "", tmp_path, dry_run=True)
+    assert page.apply_clicked == ["Bewerben"] and res.status == "dry_run"
+
+
+def test_login_wall_is_not_clicked(ctx, tmp_path):
+    page = FakePage([_f(0, "Email address", type="email", required=True)])
+    page.apply_buttons = ["Continue as Erika", "Continue with Apple", "Continue"]
+    page.fields_after_apply = base_fields()
+    res = apply(page, "https://jobs.example-board.com/viewjob?jk=1", ctx, None, "", tmp_path, dry_run=False)
+    assert res.status == "handoff" and res.reason == "form_not_found" and page.apply_clicks == 0
+
+
+def test_llm_picks_the_button_when_no_known_word(ctx, tmp_path):
+    page = FakePage([])
+    page.apply_buttons = ["Details", "Los geht's", "Kontakt"]
+    page.fields_after_apply = base_fields()
+    llm = FakeLLM("1")
+    res = apply(page, "https://careers.example.com/job/1", ctx, llm, "", tmp_path, dry_run=True)
+    assert page.apply_clicked == ["Los geht's"] and res.status == "dry_run"
+    assert "application form" in llm.prompts[0]
+
+
+def test_llm_choice_of_a_login_button_is_ignored(ctx, tmp_path):
+    page = FakePage([])
+    page.apply_buttons = ["Details", "Sign in"]
+    page.fields_after_apply = base_fields()
+    res = apply(page, "https://careers.example.com/job/1", ctx, FakeLLM("1"), "", tmp_path, dry_run=False)
+    assert res.status == "handoff" and res.reason == "form_not_found" and page.apply_clicks == 0
+
+
+def test_direct_form_ats_never_clicks(ctx, tmp_path):
+    page = FakePage([_f(0, "Search jobs")])
+    page.fields_after_apply = base_fields()
+    res = apply(page, "https://jobs.ashbyhq.com/contractco/1", ctx, None, "", tmp_path, dry_run=False)
+    assert res.status == "handoff" and res.reason == "form_not_found" and page.apply_clicks == 0
+
+
+def test_pick_apply_ranking():
+    def cands(*texts):
+        return [{"i": k, "text": t, "href": h, "tag": "a", "target": ""} for k, (t, h) in enumerate(texts)]
+    assert pick_apply(cands(("Apply with LinkedIn", ""), ("Apply now", "")))["text"] == "Apply now"
+    assert pick_apply(cands(("Submit application", ""),)) is None
+    assert pick_apply(cands(("apply@contractco.example", "mailto:apply@contractco.example"),)) is None
+    assert pick_apply(cands(("Mehr", "https://contractco.example/jobs/1/bewerbung"),))["text"] == "Mehr"
+    assert pick_apply(cands(("Jetzt bewerben", ""), ("Bewerben", "")))["text"] == "Jetzt bewerben"
+
+
 def test_form_never_appears_is_handoff(fake_page, ctx, tmp_path):
     fake_page.form_never_appears = True
     res = apply(fake_page, "https://jobs.ashbyhq.com/contractco/1", ctx, None, "", tmp_path, dry_run=False)
-    assert res.status == "handoff" and res.reason == "form_not_found" and fake_page.reads == 0
+    assert res.status == "handoff" and res.reason == "form_not_found" and not fake_page.filled
     assert [p.rsplit("/", 1)[-1] for p in res.screenshots] == ["apply_form_not_found.png"]
 
 
@@ -862,3 +1061,537 @@ def test_email_combobox_without_option_is_open_required(ctx):
     page.combo_options = ["old@example.com"]
     rep = fill_form(page, ctx, llm=None, brief="")
     assert rep.open_required == ["Email"]
+
+
+def test_source_radio_group_picks_linkedin(ctx):
+    """Recruitee asks "Wie bist du auf uns aufmerksam geworden?" as radios."""
+    q = "Wie bist du auf uns aufmerksam geworden?"
+    page = FakePage(base_fields() + [
+        _f(7, "Karriere-Webseite", type="radio", required=True, group=q),
+        _f(8, "LinkedIn", type="radio", required=True, group=q),
+        _f(9, "Sonstiges", type="radio", required=True, group=q),
+    ])
+    rep = fill_form(page, ctx, llm=None, brief="")
+    assert q in rep.filled and q not in rep.open_required and page.clicked == [f"{q}=LinkedIn"]
+
+
+def test_date_format_follows_the_page_locale(ctx):
+    """LinkedIn with an English UI rejects 2026-11-12 in its date field and takes 11/12/2026."""
+    page = FakePage([_f(0, "Earliest start date", required=True)] + base_fields()[1:])
+    fill_form(page, ctx, llm=None, brief="", date_format="%m/%d/%Y")
+    assert re.fullmatch(r"\d{2}/\d{2}/\d{4}", page.filled["Earliest start date"])
+    page = FakePage([_f(0, "Earliest start date", required=True)] + base_fields()[1:])
+    fill_form(page, ctx, llm=None, brief="")
+    assert re.fullmatch(r"\d{4}-\d{2}-\d{2}", page.filled["Earliest start date"])
+
+
+# ---- Guard: a form is never submitted without the CV
+
+def _no_file_fields():
+    return [
+        _f(0, "First name", required=True, id="fn"),
+        _f(1, "Last name", required=True, id="ln"),
+        _f(2, "Email", type="email", required=True, id="em"),
+    ]
+
+
+def test_form_without_cv_upload_is_handoff_live(ctx, tmp_path):
+    page = FakePage(_no_file_fields())
+    res = apply(page, "https://careers.example.com/job/1", ctx, None, "", tmp_path, dry_run=False, wait_ms=0)
+    assert res.status == "handoff" and res.reason == "no_cv_uploaded" and not page.clicked_submit
+
+
+def test_form_without_cv_upload_is_handoff_in_dry_run(ctx, tmp_path):
+    """The shadow pass reports what the live pass would do: a hand-off, not a ready form."""
+    page = FakePage(_no_file_fields())
+    res = apply(page, "https://careers.example.com/job/1", ctx, None, "", tmp_path, dry_run=True)
+    assert res.status == "handoff" and res.reason == "no_cv_uploaded" and not page.clicked_submit
+
+
+def test_cover_letter_alone_is_not_a_cv(ctx, tmp_path):
+    ctx.cover_letter = tmp_path / "Anschreiben.pdf"
+    page = FakePage(_no_file_fields() + [_f(3, "Cover Letter", type="file", id="cl")])
+    res = apply(page, "https://careers.example.com/job/1", ctx, None, "", tmp_path, dry_run=False, wait_ms=0)
+    assert page.files == {"Cover Letter": [str(ctx.cover_letter)]}
+    assert res.status == "handoff" and res.reason == "no_cv_uploaded" and not page.clicked_submit
+
+
+def test_fill_report_marks_the_cv_upload(fake_page, ctx):
+    assert fill_form(fake_page, ctx, llm=None, brief="").cv_uploaded is True
+    assert fill_form(FakePage(_no_file_fields()), ctx, llm=None, brief="").cv_uploaded is False
+
+
+def test_cv_already_in_the_file_field_counts(ctx):
+    """A second pass over the same tab: the browser shows the chosen file as C:\\fakepath\\<name>."""
+    fs = _no_file_fields() + [_f(3, "Resume", type="file", required=True, id="cv",
+                                 value="C:\\fakepath\\" + ctx.resume.name)]
+    rep = fill_form(FakePage(fs), ctx, llm=None, brief="")
+    assert rep.cv_uploaded is True and rep.uploaded == []
+    fs[3]["value"] = "C:\\fakepath\\Other.pdf"
+    assert fill_form(FakePage(fs), ctx, llm=None, brief="").cv_uploaded is False
+
+
+# ---- Job boards: an Indeed job page is never filled, the worker goes to the employer by URL
+
+JK = "0123456789abcdef"
+INDEED = f"https://de.indeed.com/viewjob?jk={JK}"
+APPLYSTART = f"https://de.indeed.com/applystart?jk={JK}&from=vj"
+EMBEDDED = f'<script>{{"viewJobButtonLinkModel":{{"href":"{APPLYSTART.replace("/", chr(92) + "u002F")}"}}}}</script>'
+
+
+class BoardPage(FakePage):
+    """An Indeed job page: a location search box and a job-alert email field, the employer redirect
+    in the page data or on a link. goto(applystart) is the server redirect to `employer`."""
+
+    def __init__(self, html="", cands=(), employer="https://careers.example.com/job/1", land="",
+                 body="Softwareentwickler (m/w/d) - Berlin", fail_goto=False):
+        super().__init__([_f(0, "Ort, PLZ oder Stadt", id="where"), _f(1, "E-Mail-Adresse", type="email", id="alert")],
+                         body=body)
+        self.html, self.board_cands = html, [dict(c) for c in cands]
+        self.employer, self.land, self.fail_goto = employer, land, fail_goto
+
+    def goto(self, url, wait_until=None, timeout=None):
+        if self.fail_goto:
+            raise TimeoutError("Timeout 30000ms exceeded")
+        super().goto(url, wait_until, timeout)
+        if "applystart" in url:
+            self.url = self.employer
+            self.fields = base_fields()
+        elif self.land and url == INDEED:
+            self.url = self.land
+
+    def content(self):
+        return self.html if "indeed.com" in self.url else "<html></html>"
+
+    def evaluate(self, js):
+        from bot.apply import job_boards
+        if js == job_boards.BOARD_JS:
+            return [dict(c) for c in self.board_cands]
+        return super().evaluate(js)
+
+
+def _board_cand(text, href="", **kw):
+    return {"text": text, "href": href, "id": "", "testid": "", "in_apply_box": False, "own_apply_box": False, **kw}
+
+
+def test_indeed_page_goes_to_the_employer_form_by_url(ctx, tmp_path):
+    page = BoardPage(html=EMBEDDED)
+    res = apply(page, INDEED, ctx, None, "", tmp_path, dry_run=True)
+    assert page.visited == [INDEED, APPLYSTART, "https://careers.example.com/job/1"]
+    assert res.status == "dry_run" and page.files == {"Resume": [str(ctx.resume)]}
+    assert "Ort, PLZ oder Stadt" not in page.filled and page.apply_clicks == 0
+    assert res.url == INDEED
+
+
+def test_indeed_link_to_a_known_ats_is_submitted_live(ctx, tmp_path):
+    page = BoardPage(cands=[_board_cand("Auf Unternehmenswebsite bewerben", APPLYSTART)],
+                     employer="https://job-boards.greenhouse.io/contractco/jobs/1")
+    page.probe_after_submit = {"submit_visible": False, "challenge_visible": False, "invalid_count": 0,
+                               "error_texts": [], "text": "Thank you for applying!"}
+    res = apply(page, INDEED, ctx, None, "", tmp_path, dry_run=False, wait_ms=0)
+    assert res.status == "submitted" and res.portal == "greenhouse"
+
+
+def test_indeed_apply_only_is_handoff(ctx, tmp_path):
+    page = BoardPage(html='{"indeedApplyButtonContainer":{"x":1}}',
+                     cands=[_board_cand("Jetzt bewerben", id="indeedApplyButton", own_apply_box=True)])
+    res = apply(page, INDEED, ctx, None, "", tmp_path, dry_run=False)
+    assert res.status == "handoff" and res.reason == "indeed_apply"
+    assert not page.filled and not page.clicked_submit and page.visited == [INDEED]
+    assert [p.rsplit("/", 1)[-1] for p in res.screenshots] == ["apply_indeed.png"]
+
+
+def test_indeed_page_without_any_apply_link_is_handoff(ctx, tmp_path):
+    res = apply(BoardPage(), INDEED, ctx, None, "", tmp_path, dry_run=True)
+    assert res.status == "handoff" and res.reason == "indeed_no_apply_link"
+
+
+def test_indeed_login_wall_is_handoff(ctx, tmp_path):
+    page = BoardPage(html=EMBEDDED, land="https://secure.indeed.com/auth?hl=de_DE&continue=x")
+    res = apply(page, INDEED, ctx, None, "", tmp_path, dry_run=False)
+    assert res.status == "handoff" and res.reason == "indeed_login" and not page.filled
+
+
+def test_indeed_cloudflare_check_is_captcha(ctx, tmp_path):
+    page = BoardPage(html=EMBEDDED, body="Additional Verification Required")
+    res = apply(page, INDEED, ctx, None, "", tmp_path, dry_run=False)
+    assert res.status == "handoff" and res.reason == "captcha" and page.visited == [INDEED]
+
+
+def test_indeed_block_page_is_handoff(ctx, tmp_path):
+    page = BoardPage(body="Anfrage blockiert\nSie wurden gesperrt.")
+    res = apply(page, INDEED, ctx, None, "", tmp_path, dry_run=False)
+    assert res.status == "handoff" and res.reason == "indeed_blocked" and page.visited == [INDEED]
+
+
+def test_redirect_that_stays_on_indeed_is_handoff(ctx, tmp_path):
+    page = BoardPage(html=EMBEDDED, employer="https://secure.indeed.com/auth?continue=x")
+    res = apply(page, INDEED, ctx, None, "", tmp_path, dry_run=False)
+    assert res.status == "handoff" and res.reason == "indeed_login" and not page.filled
+    page = BoardPage(html=EMBEDDED, employer=INDEED)
+    res = apply(page, INDEED, ctx, None, "", tmp_path, dry_run=False)
+    assert res.status == "handoff" and res.reason == "indeed_no_employer_page" and not page.filled
+
+
+def test_indeed_page_that_does_not_load_is_failed(ctx, tmp_path):
+    res = apply(BoardPage(fail_goto=True), INDEED, ctx, None, "", tmp_path, dry_run=False)
+    assert res.status == "failed" and res.reason.startswith("goto: TimeoutError")
+
+
+def test_board_page_is_never_a_ready_form():
+    page = FakePage(base_fields())
+    assert ats_form._form_ready(page)
+    page.url = INDEED
+    assert not ats_form._form_ready(page)
+
+
+# ---- More boards: StepStone, Arbeitsagentur and the others are never filled or clicked
+
+BA = "https://www.arbeitsagentur.de/jobsuche/jobdetail/13635-0a1b2c3d_JB1234567-S"
+PARTNER = "https://www.partner-board.example/job/1234567.html"
+STEPSTONE = "https://www.stepstone.de/stellenangebote--Android-Entwickler-Contract-Co--14675901-inline.html"
+
+
+class OtherBoardPage(FakePage):
+    """A board job page with a search box; BOARD_JS sees `cands` and content() is `html` while the
+    page is on the board. goto(employer) loads the application form there."""
+
+    def __init__(self, cands=(), html="", employer=None, body="Softwareentwickler (m/w/d) - Berlin"):
+        super().__init__([_f(0, "Was", id="was"), _f(1, "Wo", id="wo")], body=body)
+        self.board_cands, self.html, self.employer = [dict(c) for c in cands], html, employer
+        self.apply_buttons = [c["text"] for c in cands]   # what the opener would see on this page
+        self.fields_after_apply = base_fields()
+
+    def goto(self, url, wait_until=None, timeout=None):
+        super().goto(url, wait_until, timeout)
+        if url == self.employer:
+            self.fields, self.fields_after_apply = base_fields(), None
+
+    def content(self):
+        from bot.apply.job_boards import board_of
+        return self.html if board_of(self.url) else "<html></html>"
+
+    def evaluate(self, js):
+        from bot.apply import job_boards
+        if js == job_boards.BOARD_JS:
+            return [dict(c) for c in self.board_cands] if job_boards.board_of(self.url) else []
+        return super().evaluate(js)
+
+
+def test_arbeitsagentur_partner_offer_goes_to_the_external_page(ctx, tmp_path):
+    page = OtherBoardPage([_board_cand("Externe Seite öffnen", PARTNER, id="detail-beschreibung-externe-url-btn")],
+                          employer=PARTNER)
+    res = apply(page, BA, ctx, None, "", tmp_path, dry_run=True)
+    assert page.visited[:2] == [BA, PARTNER] and res.status == "dry_run"
+    assert "Was" not in page.filled and page.files == {"Resume": [str(ctx.resume)]} and res.url == BA
+
+
+def test_arbeitsagentur_contacts_behind_captcha_is_handoff(ctx, tmp_path):
+    """A BA offer without a partner link: the employer's contacts sit behind the BA's own captcha,
+    whose «Absenden» is a submit button. Only a human goes on from there."""
+    page = OtherBoardPage([_board_cand("Info zur Bewerbung"), _board_cand("Absenden")],
+                          html='<input id="kontaktdaten-captcha-input"><button type="submit">Absenden</button>')
+    res = apply(page, BA, ctx, None, "", tmp_path, dry_run=False)
+    assert res.status == "handoff" and res.reason == "arbeitsagentur_captcha"
+    assert not page.filled and not page.clicked_submit and page.apply_clicks == 0 and page.visited == [BA]
+
+
+def test_stepstone_form_lead_is_never_clicked(ctx, tmp_path):
+    """StepStone's «Ich bin interessiert» may send a profile application by itself: never clicked here."""
+    page = OtherBoardPage([_board_cand("Ich bin interessiert", testid="harmonised-apply-button")])
+    res = apply(page, STEPSTONE, ctx, None, "", tmp_path, dry_run=False)
+    assert res.status == "handoff" and res.reason == "stepstone_no_apply_link"
+    assert page.apply_clicks == 0 and not page.filled and not page.clicked_submit
+    assert [p.rsplit("/", 1)[-1] for p in res.screenshots] == ["apply_stepstone.png"]
+
+
+def test_employer_page_that_redirects_to_a_board_is_handoff(ctx, tmp_path):
+    """A lead URL that lands on a board (a tracking link to StepStone): the opener clicks nothing there."""
+
+    class Redirect(FakePage):
+        def goto(self, url, wait_until=None, timeout=None):
+            super().goto(url, wait_until, timeout)
+            self.url = STEPSTONE
+
+    page = Redirect([_f(0, "Was", id="was")])
+    page.apply_buttons = ["Ich bin interessiert"]
+    page.fields_after_apply = base_fields()
+    res = apply(page, "https://careers.example.com/job/1", ctx, None, "", tmp_path, dry_run=False)
+    assert res.status == "handoff" and res.reason == "stepstone_redirect"
+    assert page.apply_clicks == 0 and not page.filled and not page.clicked_submit
+
+
+def test_apply_link_on_the_employer_page_that_opens_a_board_is_handoff(ctx, tmp_path):
+    """The employer's «Jetzt bewerben» leads to its StepStone ad: one click on the employer page, none on StepStone."""
+
+    class ToBoard(FakePage):
+        def _apply_click(self, text):
+            super()._apply_click(text)
+            self.url = STEPSTONE
+            self.fields_after_apply = None
+
+    page = ToBoard([])
+    page.apply_buttons = ["Jetzt bewerben"]
+    page.fields_after_apply = base_fields()
+    res = apply(page, "https://careers.example.com/job/1", ctx, None, "", tmp_path, dry_run=False)
+    assert res.status == "handoff" and res.reason == "stepstone_redirect"
+    assert page.apply_clicked == ["Jetzt bewerben"] and not page.filled and not page.files
+
+
+# ---- German file fields: the CV goes into a generic documents upload when there is no CV field
+
+@pytest.fixture
+def package(ctx, tmp_path):
+    """The de_employment package: CV, Anschreiben and two Zeugnisse marked portal: true."""
+    files = {n: tmp_path / n for n in ("Erika_Muster_CV.pdf", "01_Anschreiben.pdf", "Zeugnis_A.pdf", "Zeugnis_B.pdf")}
+    for p in files.values():
+        p.write_bytes(b"%PDF-1.4\n%%EOF\n")
+    ctx.resume, ctx.cover_letter = files["Erika_Muster_CV.pdf"], files["01_Anschreiben.pdf"]
+    ctx.attachments = list(files.values())
+    return [str(p) for p in files.values()]
+
+
+def test_documents_field_takes_the_cv_when_the_form_has_no_cv_field(ctx, tmp_path):
+    for label in ("Anlagen", "Unterlagen", "Bewerbungsunterlagen", "Dokumente", "Dateien", "Anhänge"):
+        page = FakePage(_no_file_fields() + [_f(3, label, type="file", id="docs")])
+        rep = fill_form(page, ctx, llm=None, brief="")
+        assert page.files == {label: [str(ctx.resume)]} and rep.cv_uploaded, label
+
+
+def test_documents_field_that_takes_several_files_gets_the_whole_package(ctx, package):
+    page = FakePage(_no_file_fields() + [_f(3, "Bewerbungsunterlagen", type="file", id="docs", multiple=True)])
+    assert fill_form(page, ctx, llm=None, brief="").cv_uploaded
+    assert page.files == {"Bewerbungsunterlagen": package}
+
+
+def test_package_skips_the_cover_letter_when_the_form_has_its_own_field(ctx, package):
+    page = FakePage(_no_file_fields() + [_f(3, "Anschreiben", type="file", id="cl"),
+                                         _f(4, "Weitere Unterlagen", type="file", id="docs", multiple=True)])
+    assert fill_form(page, ctx, llm=None, brief="").cv_uploaded
+    assert page.files == {"Anschreiben": [package[1]], "Weitere Unterlagen": [package[0], package[2], package[3]]}
+
+
+def test_combined_cv_and_documents_field_gets_the_whole_package(ctx, package):
+    label = "Bewerbungsunterlagen (Lebenslauf, Anschreiben, Zeugnisse)"
+    page = FakePage(_no_file_fields() + [_f(3, label, type="file", id="docs", required=True, multiple=True)])
+    fill_form(page, ctx, llm=None, brief="")
+    assert page.files == {label: package}
+
+
+def test_single_cv_field_that_takes_several_files_gets_the_cv_only(ctx, package):
+    page = FakePage(_no_file_fields() + [_f(3, "Lebenslauf", type="file", id="cv", multiple=True)])
+    fill_form(page, ctx, llm=None, brief="")
+    assert page.files == {"Lebenslauf": [package[0]]}
+    # The words that count are the ones a person reads, not an id like cv_file.
+    page = FakePage(_no_file_fields() + [_f(3, "Lebenslauf", type="file", id="cv_file", multiple=True)])
+    fill_form(page, ctx, llm=None, brief="")
+    assert page.files == {"Lebenslauf": [package[0]]}
+
+
+def test_form_with_a_cv_field_keeps_the_old_rules(ctx, package):
+    """«Lebenslauf» takes the CV; an optional «Weitere Unterlagen» the cover letter, a required one the CV."""
+    page = FakePage(_no_file_fields() + [_f(3, "Lebenslauf", type="file", id="cv"),
+                                         _f(4, "Weitere Unterlagen", type="file", id="docs", multiple=True)])
+    fill_form(page, ctx, llm=None, brief="")
+    assert page.files == {"Lebenslauf": [package[0]], "Weitere Unterlagen": [package[1]]}
+    page = FakePage(_no_file_fields() + [_f(3, "Lebenslauf", type="file", id="cv"),
+                                         _f(4, "Unterlagen", type="file", id="docs", required=True)])
+    fill_form(page, ctx, llm=None, brief="")
+    assert page.files == {"Lebenslauf": [package[0]], "Unterlagen": [package[0]]}
+
+
+def test_second_documents_field_keeps_the_old_rule(ctx, package):
+    page = FakePage(_no_file_fields() + [_f(3, "Unterlagen", type="file", id="d1"),
+                                         _f(4, "Sonstige Dokumente", type="file", id="d2")])
+    assert fill_form(page, ctx, llm=None, brief="").cv_uploaded
+    assert page.files == {"Unterlagen": [package[0]], "Sonstige Dokumente": [package[1]]}
+
+
+def test_lone_unlabelled_file_input_takes_the_cv_outside_ashby(ctx, tmp_path):
+    page = FakePage(_no_file_fields() + [_f(3, "", type="file")])
+    res = apply(page, "https://careers.example.com/job/1", ctx, None, "", tmp_path, dry_run=True)
+    assert res.status == "dry_run" and page.files == {"": [str(ctx.resume)]}
+
+
+def test_unlabelled_file_input_on_ashby_is_the_autofill(ctx, tmp_path):
+    page = FakePage(_no_file_fields() + [_f(3, "", type="file")])
+    res = apply(page, "https://jobs.ashbyhq.com/contractco/1", ctx, None, "", tmp_path, dry_run=True)
+    assert res.status == "handoff" and res.reason == "no_cv_uploaded" and not page.files
+    page = FakePage(_no_file_fields() + [_f(3, "", type="file", ashby_autofill=True)])
+    res = apply(page, "https://careers.example.com/job/1", ctx, None, "", tmp_path, dry_run=True)
+    assert res.status == "handoff" and res.reason == "no_cv_uploaded" and not page.files
+
+
+def test_two_unlabelled_file_inputs_take_nothing(ctx, tmp_path):
+    """Which of two unlabelled inputs is the photo is a guess: the operator decides."""
+    page = FakePage(_no_file_fields() + [_f(3, "", type="file"), _f(4, "", type="file")])
+    res = apply(page, "https://careers.example.com/job/1", ctx, None, "", tmp_path, dry_run=True)
+    assert res.status == "handoff" and res.reason == "no_cv_uploaded" and not page.files
+
+
+def test_photo_field_never_gets_a_document(ctx, package, tmp_path):
+    page = FakePage(_no_file_fields() + [_f(3, "Bewerbungsfoto", type="file", id="photo"),
+                                         _f(4, "Anlagen", type="file", id="docs")])
+    res = apply(page, "https://careers.example.com/job/1", ctx, None, "", tmp_path, dry_run=True)
+    assert res.status == "dry_run" and page.files == {"Anlagen": [package[0]]}
+
+
+# ---- The avatar is never the CV field (SmartRecruiters, 30.10.2026)
+
+SR_IMAGES = ".BMP,.GIF,.JFIF,.JPEG,.JPG,.PNG,.TIF,.TIFF,.WEBP"
+
+
+def test_avatar_next_to_the_resume_dropzone_gets_nothing(ctx, tmp_path):
+    """Both inputs unlabelled, as in a web-component form: the image-only avatar is a photo, the required
+    dropzone the CV field. A required photo stays open for the operator."""
+    page = FakePage(_no_file_fields() + [_f(3, "", type="file", required=True, accept=SR_IMAGES),
+                                         _f(4, "", type="file", required=True, id="dropzone")])
+    res = apply(page, "https://careers.example.com/job/1", ctx, None, "", tmp_path, dry_run=True)
+    assert page.fields[3]["value"] == "" and page.fields[4]["value"] == str(ctx.resume)
+    assert res.status == "handoff" and res.reason.startswith("open_required")
+    # An optional avatar: the form is ready.
+    page = FakePage(_no_file_fields() + [_f(3, "", type="file", accept=SR_IMAGES),
+                                         _f(4, "", type="file", required=True, id="dropzone")])
+    res = apply(page, "https://careers.example.com/job/1", ctx, None, "", tmp_path, dry_run=True)
+    assert res.status == "dry_run" and page.fields[3]["value"] == "" and page.fields[4]["value"] == str(ctx.resume)
+
+
+def test_avatar_is_not_a_lone_upload_when_another_file_input_exists(ctx, tmp_path):
+    """The resume dropzone's input was not seen as visible: the unlabelled avatar is not «the only upload»."""
+    page = FakePage(_no_file_fields() + [_f(3, "", type="file"),
+                                         _f(4, "Resume", type="file", required=True, visible=False, id="cv")])
+    res = apply(page, "https://careers.example.com/job/1", ctx, None, "", tmp_path, dry_run=True)
+    assert res.status == "handoff" and res.reason == "no_cv_uploaded" and not page.files
+
+
+def test_lone_image_only_upload_gets_nothing(ctx, tmp_path):
+    page = FakePage(_no_file_fields() + [_f(3, "", type="file", accept=SR_IMAGES)])
+    res = apply(page, "https://careers.example.com/job/1", ctx, None, "", tmp_path, dry_run=True)
+    assert res.status == "handoff" and res.reason == "no_cv_uploaded" and not page.files
+
+
+def test_cv_never_goes_into_an_input_that_does_not_accept_it(ctx, tmp_path):
+    page = FakePage(_no_file_fields() + [_f(3, "Resume", type="file", required=True, accept=".doc,.docx", id="cv")])
+    res = apply(page, "https://careers.example.com/job/1", ctx, None, "", tmp_path, dry_run=True)
+    assert res.status == "handoff" and not page.files
+
+
+def test_file_input_that_changed_under_the_index_gets_nothing(ctx, tmp_path):
+    """The read saw the dropzone at this index, the live element is now an image-only avatar: no upload."""
+    page = FakePage(_no_file_fields() + [_f(3, "", type="file", required=True)])
+    page.attr_override[("", "accept")] = SR_IMAGES
+    res = apply(page, "https://careers.example.com/job/1", ctx, None, "", tmp_path, dry_run=True)
+    assert res.status == "handoff" and not page.files
+
+
+def test_documents_only_form_is_submitted_live(ctx, tmp_path):
+    page = FakePage(_no_file_fields() + [_f(3, "Anlagen", type="file", id="docs")], buttons=("Absenden",))
+    page.probe_after_submit = {"submit_visible": False, "challenge_visible": False, "invalid_count": 0,
+                               "error_texts": [], "text": "Thank you for your application"}
+    res = apply(page, "https://careers.example.com/job/1", ctx, None, "", tmp_path, dry_run=False, wait_ms=0)
+    assert res.status == "submitted" and page.files == {"Anlagen": [str(ctx.resume)]}
+
+
+def test_email_select_with_another_own_address_is_kept(ctx):
+    """02.11.2026: LinkedIn offered only the client's job-search address, the profile has the main one;
+    every Easy Apply went to hand-off. Any of the client's own addresses is a valid answer."""
+    ctx = replace(ctx, own_emails=("erika.jobs@example.com",))
+    page = ScopedPage([
+        _f(0, "E-Mail-Adresse*", type="select", tag="select", required=True, value="erika.jobs@example.com",
+           options=["erika.jobs@example.com"], id="em"),
+    ])
+    rep = fill_form(page, ctx, llm=None, brief="", root="dialog[open]")
+    assert page.selected == {} and rep.open_required == []
+
+
+def test_separate_house_number_field_splits_the_street(ctx):
+    """Abacus 02.11.2026: «Strasse*» and «Hausnummer*» are two fields; the filler put the whole
+    «Musterstraße 1» into both. With a house-number field the street gets only its name."""
+    page = FakePage([_f(0, "Strasse*", required=True, id="st"), _f(1, "Hausnummer*", required=True, id="hn")])
+    rep = fill_form(page, ctx, llm=None, brief="")
+    assert page.filled == {"Strasse*": "Musterstraße", "Hausnummer*": "1"} and rep.open_required == []
+
+
+def test_combined_street_field_keeps_the_house_number(ctx):
+    page = FakePage([_f(0, "Straße & Hausnr.*", required=True, id="st")])
+    fill_form(page, ctx, llm=None, brief="")
+    assert page.filled == {"Straße & Hausnr.*": "Musterstraße 1"}
+
+
+class WizardPage(FakePage):
+    """A multi-step form: each step has its fields and buttons; the step's next button shows the next
+    one, a final button (or a next button on the last step, like Abacus) shows `done_text`."""
+
+    def __init__(self, steps, done_text="Vielen Dank für deine Bewerbung", stuck=False):
+        super().__init__(steps[0][0], body="Bewerbung", buttons=steps[0][1])
+        self.steps = steps
+        self.k = 0
+        self.done_text = done_text
+        self.stuck = stuck
+        self.step_clicks: list[str] = []
+
+    def _button_click(self, text):
+        self.step_clicks.append(text)
+        if self.stuck:
+            self.probe_after_submit = {"submit_visible": True, "challenge_visible": False, "invalid_count": 1,
+                                       "error_texts": ["Bitte füllen Sie alle Pflichtfelder aus"], "text": "Bewerbung"}
+            self.clicked_submit = True
+            return
+        if self.k + 1 < len(self.steps):
+            self.k += 1
+            self.fields, self.buttons = self.steps[self.k]
+            return
+        self.clicked_submit = True
+        self.probe_after_submit = {"submit_visible": False, "challenge_visible": False, "invalid_count": 0,
+                                   "error_texts": [], "text": self.done_text}
+
+
+def _wizard(last_button="Bewerbung absenden"):
+    return [
+        ([_f(0, "Vorname", required=True), _f(1, "E-Mail", type="email", required=True)], ["Zurück", "Weiter"]),
+        ([_f(0, "Telefon", required=True)], ["Zurück", "zum letzten Schritt"]),
+        ([_f(0, "Lebenslauf", type="file", required=True)], ["Zurück", last_button]),
+    ]
+
+
+def test_wizard_steps_through_to_the_submit(ctx, tmp_path):
+    """softgarden/Abacus 02.11.2026: step 1 had no submit button, the worker stopped with
+    no_submit_button; the CV sat on the last step (Abacus), so no_cv_uploaded came first."""
+    page = WizardPage(_wizard())
+    res = apply(page, "https://careers.example.com/job/1", ctx, None, "", tmp_path, dry_run=False, wait_ms=0)
+    assert res.status == "submitted" and page.step_clicks == ["Weiter", "zum letzten Schritt", "Bewerbung absenden"]
+    names = [p.rsplit("/", 1)[-1] for p in res.screenshots]
+    assert names[:3] == ["apply_form_filled.png", "apply_form_step2.png", "apply_form_step3.png"]
+
+
+def test_wizard_whose_last_next_button_sends(ctx, tmp_path):
+    """Abacus: the third step's «Weiter» is the send button; the confirmation after it is the result."""
+    page = WizardPage(_wizard(last_button="Weiter"), done_text="Bewerbung erfolgreich abgeschickt. Vielen Dank für deine Bewerbung")
+    res = apply(page, "https://careers.example.com/job/1", ctx, None, "", tmp_path, dry_run=False, wait_ms=0)
+    assert res.status == "submitted" and page.step_clicks == ["Weiter", "zum letzten Schritt", "Weiter"]
+
+
+def test_wizard_that_does_not_advance_is_a_validation_handoff(ctx, tmp_path):
+    page = WizardPage(_wizard(), stuck=True)
+    res = apply(page, "https://careers.example.com/job/1", ctx, None, "", tmp_path, dry_run=False, wait_ms=0)
+    assert res.status == "handoff" and res.reason.startswith("validation: Bitte füllen")
+    assert page.step_clicks == ["Weiter"]
+
+
+def test_wizard_in_shadow_stops_at_the_first_next_button(ctx, tmp_path):
+    page = WizardPage(_wizard())
+    res = apply(page, "https://careers.example.com/job/1", ctx, None, "", tmp_path, dry_run=True)
+    assert res.status == "dry_run" and "step 1" in res.reason and page.step_clicks == []
+
+
+def test_next_step_texts():
+    from bot.apply.ats_form import pick_next
+
+    def cand(text, **kw):
+        return {"i": 0, "text": text, "submit_type": False, "in_form": True, "other_form": False, "disabled": False, **kw}
+    for t in ("Weiter", "zum nächsten Schritt", "Zum letzten Schritt", "Next", "Continue", "Hochladen und weiter",
+              "Weiter zur Bewerbungsvorschau"):
+        assert pick_next([cand(t)]) is not None, t
+    for t in ("Weiter mit XING", "Zurück", "Weiter einkaufen ohne Anmeldung bei Google", "Weiterempfehlen", "Bewerben"):
+        assert pick_next([cand(t)]) is None, t
+    assert pick_next([cand("Weiter", other_form=True)]) is None

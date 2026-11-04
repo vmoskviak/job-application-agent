@@ -38,7 +38,65 @@ CONFIRMATION_PATTERNS = [
     "bewerbung abgeschickt",
     "bewerbung wurde abgeschickt",
     "bewerbung ist unterwegs",
+    # softgarden 2026: «Vielen Dank, die Bewerbung ist bei uns erfolgreich eingegangen!»
+    "erfolgreich eingegangen",
+    # Abacus 2026: «Bewerbung erfolgreich abgeschickt»
+    "erfolgreich abgeschickt",
 ]
+
+# Phrases a page shows only after the application went out. The hand-off probe accepts them even
+# while an apply button is still visible: career pages keep «Jetzt bewerben» next to the success box
+# (02.11.2026), and the operator's submitted form then waited for the deadline. Generic thanks
+# («Vielen Dank für Ihre Bewerbung») stay out: forms print them above the submit button too.
+COMPLETED_PATTERNS = (
+    "bewerbung wurde erfolgreich",
+    "erfolgreich eingegangen",
+    "bewerbung ist unterwegs",
+    "bewerbung erfolgreich abgeschickt",
+    "bewerbung wurde abgeschickt",
+    "bewerbung wurde übermittelt",
+)
+
+
+FRC_SOLUTION = "input[name='frc-captcha-solution'], input[name='frc-captcha-response']"
+
+
+def wait_friendly_captcha(page, timeout_ms: int = 60000, poll_ms: int = 1000) -> str:
+    """FriendlyCaptcha on the page (proof of work, no puzzle): waits until its hidden solution holds a
+    token. 'none' without the widget, 'solved', 'failed' (the widget says the check failed), 'pending'
+    at the timeout. Before the token the value is a placeholder starting with a dot (.UNSTARTED,
+    .FETCHING, .UNFINISHED). A widget that waits for a start (softgarden: «Hier klicken») gets one
+    click on its button: that only starts the computation in the browser."""
+    sol = page.locator(FRC_SOLUTION)
+    if not sol.count():
+        return "none"
+    started = False
+    waited = 0
+    while True:
+        try:
+            token = sol.first.input_value()
+        except Exception:  # noqa: BLE001 - the widget re-renders: read again on the next poll
+            token = ""
+        if token and not token.startswith("."):
+            return "solved"
+        try:
+            text = page.locator(".frc-captcha, .frc-container").first.inner_text(timeout=500).lower()
+        except Exception:  # noqa: BLE001
+            text = ""
+        if "fehlgeschlagen" in text or "failed" in text:
+            return "failed"
+        if token == ".UNSTARTED" and not started:
+            btn = page.locator(".frc-button").first
+            if btn.count():
+                try:
+                    btn.click(timeout=3000)
+                except Exception:  # noqa: BLE001 - not clickable yet: the widget may still start on its own
+                    pass
+            started = True
+        if waited >= timeout_ms:
+            return "pending"
+        page.wait_for_timeout(poll_ms)
+        waited += poll_ms
 
 
 def accept_cookies(page) -> None:

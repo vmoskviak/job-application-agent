@@ -30,6 +30,7 @@ from bot.generators.inbox import (
     draft_language,
     draft_prompt,
     is_agency,
+    is_no_reply,
     parse_draft,
     platform_group,
     status_for_class,
@@ -43,6 +44,7 @@ from bot.telegram.cards import (
     card_id,
     followup_card,
     gmail_url,
+    info_card,
     notify_card,
     rejection_card,
     reply_card,
@@ -75,9 +77,11 @@ class WatchResult:
 
 
 def _record(cid: str, kind: str, status: str, item: dict, cls: str, draft: str | None, created: str) -> dict:
+    # from / reply_to: the dispatcher refuses a send to an address that cannot receive it
     return {"id": cid, "kind": kind, "status": status, "account": item.get("account"),
             "message_id": item.get("message_id"), "thread_id": item.get("thread_id"),
-            "company": item.get("company"), "class": cls, "draft": draft, "created": created}
+            "company": item.get("company"), "class": cls, "draft": draft, "created": created,
+            "from": item.get("from"), "reply_to": item.get("reply_to") or ""}
 
 
 def _now_text() -> str:
@@ -88,6 +92,26 @@ def _now_text() -> str:
 _STATUS_RANK = {"confirmed": 1, "interview": 2}
 _TERMINAL = ("rejected",)
 _DE_DOMAINS = (".de", ".at", ".ch")
+# Rows the operator closed: a new mail for them gets a line in the chat, not a draft
+_CLOSED = ("withdrew", "skipped")
+# A mail the owner binned is answered by nobody; only these classes still earn a line
+_TRASHED_NOTICE = ("interview", "info_request")
+
+
+def _closed_status(tracker: Path, company: str | None) -> str | None:
+    """withdrew / skipped when the operator closed the company's row, else None."""
+    if not company:
+        return None
+    status = tracker_status_by_company(tracker).get(company, "")
+    word = status.split()[0] if status else ""
+    return word if word in _CLOSED else None
+
+
+def leaked_name(text: str, names: list[str]) -> str | None:
+    """The first of `names` (targeting.yaml → forbidden_names) that the text mentions, any case.
+    Drafts to addresses outside the tracker and Upwork proposals must never carry one."""
+    low = (text or "").lower()
+    return next((n for n in names if n and n.lower() in low), None)
 
 
 def _mail_date(item: dict) -> datetime:
@@ -138,6 +162,12 @@ def run_watch(cfg: WatchConfig, items: list[dict], tracker: Path, state_dir: Pat
         res.carded.append(record["id"])
         return True
 
+    def post_info(item: dict, cls: str, url: str, reason: str, status: str = "") -> bool:
+        """A card without a draft and without a send button (bot.telegram.cards.info_card)."""
+        cid = card_id("info", str(item.get("message_id") or ""))
+        return post(info_card(item, cls, url, cfg.lang, reason, status),
+                    _record(cid, "info", "info", item, cls, None, today_s))
+
     def set_status(company: str | None, status: str | None, from_llm: bool = False) -> None:
         if cfg.dry_run or not company or not status:
             return
@@ -166,10 +196,18 @@ def run_watch(cfg: WatchConfig, items: list[dict], tracker: Path, state_dir: Pat
             res.skipped.append({"message_id": mid, "reason": "unknown sender"})
             mark_seen(mid)
             continue
-        set_status(company, status_for_class(cls))
+        closed = _closed_status(tracker, company)
+        if not closed:   # a closed row stays the operator's decision; the card tells him about the mail
+            set_status(company, status_for_class(cls))
         url = gmail_url(cfg.gmail_address, mid)
         if cls == "confirmed":
             mark_seen(mid)
+            continue
+        if item.get("trashed"):
+            # binned by the owner, seen only because the passes read in:anywhere (29.10.2026:
+            # two trashed mails became reply cards): the status above counts, nobody answers it
+            if cls not in _TRASHED_NOTICE or post_info(item, cls, url, "trashed"):
+                mark_seen(mid)
             continue
         if cls == "rejected":
             cid = card_id("rejected", mid)
@@ -179,6 +217,11 @@ def run_watch(cfg: WatchConfig, items: list[dict], tracker: Path, state_dir: Pat
         if item.get("thread_answered"):
             res.skipped.append({"message_id": mid, "reason": "already answered"})
             mark_seen(mid)
+            continue
+        if closed or is_no_reply(item.get("reply_to") or frm):
+            # no draft and no LLM call: the reply would reach nobody or reopen a closed row
+            if post_info(item, cls, url, "closed" if closed else "no_reply", closed or ""):
+                mark_seen(mid)
             continue
         if llm_blocked:
             res.skipped.append({"message_id": mid, "reason": "lock busy"})
@@ -201,7 +244,7 @@ def run_watch(cfg: WatchConfig, items: list[dict], tracker: Path, state_dir: Pat
                 if cls == "unknown" and parsed["class"] != "unknown":
                     cls = parsed["class"]
                     set_status(company, status_for_class(cls), from_llm=True)
-                leaked = next((n for n in forbidden if n.lower() in draft.lower()), None)
+                leaked = leaked_name(draft, forbidden)
                 if leaked:
                     draft = None
                     res.skipped.append({"message_id": mid, "reason": f"forbidden name: {leaked}"})
@@ -213,6 +256,15 @@ def run_watch(cfg: WatchConfig, items: list[dict], tracker: Path, state_dir: Pat
                 res.skipped.append({"message_id": mid, "reason": f"llm: {e}"})
         else:
             res.skipped.append({"message_id": mid, "reason": "llm budget"})
+        if cls in ("confirmed", "system"):
+            # the model recognised an auto-ack the keywords missed: nothing to answer
+            mark_seen(mid)
+            continue
+        if cls == "rejected":
+            cid = card_id("rejected", mid)
+            if post(rejection_card(item, cid, url, cfg.lang), _record(cid, "rejected", "info", item, cls, None, today_s)):
+                mark_seen(mid)
+            continue
         cid = card_id("reply", mid)
         if post(reply_card(item, cls, draft, cid, url, cfg.lang), _record(cid, "reply", "open", item, cls, draft, today_s)):
             mark_seen(mid)

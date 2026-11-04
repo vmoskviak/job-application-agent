@@ -117,10 +117,14 @@ def _duplicate_in_tracker(pkg: Package, tracker_path: Path) -> bool:
 
 
 def check_package(pkg: Package, *, tracker_path: Path, expected_lang: str, forbidden_names: list[str],
-                  hourly_min: int | None, is_agency: bool, platforms: dict[str, str] | None = None) -> list[str]:
-    """Причини, через які пакет не може піти; порожньо = можна слати. platforms: вимикачі
-    з bot.platforms.declared; лід платформи, оголошеної off або не оголошеної, стає
-    platform_off:<назва>. None (старі виклики): вимикачі не перевіряються."""
+                  hourly_min: int | None, is_agency: bool, platforms: dict[str, str] | None = None,
+                  limits: dict[str, int] | None = None) -> list[str]:
+    """Reasons the package cannot go; empty = it may be sent. platforms: the switches from
+    bot.platforms.declared; a lead of a platform declared off or not declared at all becomes
+    platform_off:<name>. None (old callers): the switches are not checked.
+    limits: daily limits (bot.sendqueue.limits_from); a lead of a platform that is on or shadow
+    but has no daily limit becomes platform_limit_zero:<name>, because the worker's limit for it
+    is 0 and the lead would wait in the queue for ever. None: not checked."""
     reasons: list[str] = []
     note_lower = (pkg.note or "").lower()
     if pkg.channel == "none":
@@ -128,7 +132,9 @@ def check_package(pkg: Package, *, tracker_path: Path, expected_lang: str, forbi
     platform = platform_of(pkg.channel, pkg.apply_url)
     if platforms is not None and platform and platforms.get(platform, "off") == "off":
         reasons.append(f"platform_off:{platform}")
-    # мова самого тексту, не meta; порожня нотатка (форма без Anschreiben-поля) мови не має
+    elif limits is not None and platform and int(limits.get(platform, 0)) <= 0:
+        reasons.append(f"platform_limit_zero:{platform}")
+    # the language of the text itself, not meta; an empty note (a form without an Anschreiben field) has none
     if (pkg.note or "").strip() and _eng.detect_lang(pkg.note) != expected_lang:
         reasons.append("language_mismatch")
     if is_agency or pkg.channel in FORBIDDEN_CHANNELS:

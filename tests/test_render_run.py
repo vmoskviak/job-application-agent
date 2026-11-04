@@ -196,3 +196,16 @@ def test_main_reports_client_error_without_traceback(monkeypatch, tmp_path, caps
     _client.active.cache_clear()
     assert render_run.main(["morning", "--out-dir", str(tmp_path)]) == 3
     assert "ще не підтримується" in capsys.readouterr().err
+
+
+def test_morning_prompt_sends_linkedin_through_the_pipeline_not_the_manual_list():
+    """LinkedIn alert links go to discover, filter, tailoring and the worker queue (Easy Apply);
+    the manual list keeps only the held leads, with the reason."""
+    p = _render("morning", "erika")
+    assert "link-only" not in p and "LinkedIn Easy Apply and corporate ATS: only a link" not in p
+    assert "**LinkedIn job alerts:**" in p and "linkedin.com/comm/jobs/view/" in p
+    assert "-o var/run/filtered_alerts_YYYY-MM-DD.json" in p
+    assert "--batch-render var/run/batch_alerts_YYYY-MM-DD.json" in p
+    assert "`apply_channel ∈ {manual_link, linkedin}`" in p
+    assert "platform_off:linkedin" in p and "platform_limit_zero:linkedin" in p
+    assert "(3) the **manual list** (`held` leads of Step 5b" in p

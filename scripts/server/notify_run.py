@@ -23,11 +23,13 @@ from bot import notify as _notify
 from bot import operator_report as rep
 
 
-def rows_at(root: Path, sha: str) -> list:
-    proc = subprocess.run(["git", "-C", str(root), "show", f"{sha}:tracker.md"],
+def rows_at(root: Path, sha: str) -> list | None:
+    """Tracker rows at commit `sha`, or None when git cannot show them. `./` keeps the path
+    relative to the client folder, which sits inside the data repo."""
+    proc = subprocess.run(["git", "-C", str(root), "show", f"{sha}:./tracker.md"],
                           capture_output=True, text=True, check=False)
     if proc.returncode != 0:
-        return []
+        return None
     with tempfile.NamedTemporaryFile("w", suffix=".md", delete=False, encoding="utf-8") as f:
         f.write(proc.stdout)
     try:
@@ -45,7 +47,12 @@ def main(argv: list[str] | None = None) -> int:
     if not _notify.configured(c):
         print("[notify] telegram not configured, skipping")
         return 0
-    text = _notify.run_changes_text(rows_at(c.root, args.base), rep.parse_rows(c.tracker),
+    before = rows_at(c.root, args.base)
+    if before is None:
+        # Without the old tracker every past interview looks new and floods Telegram.
+        print(f"[notify] cannot read tracker.md at {args.base}, skipping")
+        return 0
+    text = _notify.run_changes_text(before, rep.parse_rows(c.tracker),
                                     args.run, c.telegram["lang"])
     if text is None:
         print("[notify] no new interviews or requests")

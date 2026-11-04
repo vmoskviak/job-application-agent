@@ -162,12 +162,16 @@ def apply(page, url: str, note: str, attachments: list[Path], shots_dir: Path,
             return result("handoff", reason="no_file_input")
 
         page.locator(COVER_SELECTOR).first.fill(note, timeout=5000)
-        file_input.first.set_input_files([str(p) for p in attachments], timeout=10000)
-        attached = file_input.first.evaluate("el => el.files ? el.files.length : 0")
-        if attached != len(attachments):
-            shot("apply_upload_not_attached.png")
-            return result("handoff", reason="upload_not_attached")
-        page.wait_for_timeout(UPLOAD_SETTLE_MS)
+        # The live input (29.10.2026) has no `multiple`: one file per call, each checked on its own.
+        multiple = bool(file_input.first.evaluate("el => !!el.multiple"))
+        batches = [[str(p) for p in attachments]] if multiple else [[str(p)] for p in attachments]
+        for batch in batches:
+            file_input.first.set_input_files(batch, timeout=10000)
+            attached = file_input.first.evaluate("el => el.files ? el.files.length : 0")
+            if attached != len(batch):
+                shot("apply_upload_not_attached.png")
+                return result("handoff", reason="upload_not_attached")
+            page.wait_for_timeout(UPLOAD_SETTLE_MS)
         _tick(page, EMAIL_CHECKBOX_SELECTOR)
         _tick(page, PHONE_CHECKBOX_SELECTOR)
         shot("apply_form_filled.png")

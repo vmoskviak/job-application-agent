@@ -157,3 +157,83 @@ def is_junk_company(company: str) -> bool:
     c = (company or "").strip()
     return (not c or c.lower() in ("unbekannt", "unknown") or c.startswith(("#", "!", "["))
             or c.lower().endswith(" logo"))
+
+
+# --- Page titles: role and company apart -------------------------------------------------
+# «<Role> bei <Firma GmbH> | hokify», «<Role> - <Firma> | BeBee», «<Role> | Köln | <Firma>»,
+# «<Role> - Karriere bei <Firma>», «<Role> bei der <Firma GmbH> (m/w/d)». Before 03.11.2026 the
+# company of such a job was the whole title or «Unbekannt», and the check against the tracker
+# missed three repeat applications in one morning.
+
+_LEGAL_FORM = (r"(?:gGmbH|GmbH(?:\s*&\s*Co\.?\s*KG)?|mbH|AG|SE|KGaA|KG|OHG|GbR|e\.\s?V\.|eG"
+               r"|PartG(?:\s*mbB)?|UG(?:\s*\(haftungsbeschränkt\))?|Ltd\.?|Inc\.?|B\.V\.|S\.A\.)")
+_BEI_COMPANY_RE = re.compile(
+    r"\bbei\s+(?:der|dem|den)?\s*(?P<c>[^|()]{2,80}?\s" + _LEGAL_FORM + r")(?=\s*(?:\(|$|[,|–-]))")
+_KARRIERE_BEI_RE = re.compile(r"\s*(?:[-–|]\s*)?\b(?:Karriere|Jobs?)\s+bei\s+(?P<c>[^|()]{2,60}?)\s*$",
+                              re.IGNORECASE)
+_DASH_COMPANY_RE = re.compile(r"^(?P<title>.+?)\s+[-–]\s+(?P<company>[^-–|]{3,}?)\s*$")
+# Segments that name the site's section, not the employer («RP Stellenmarkt», «Jobs bei …»).
+_GENERIC_SEGMENT_RE = re.compile(
+    r"^(?:rp\s+)?(?:stellenmarkt|stellenangebot\w*|stellenanzeige\w*|stellenbörse|jobbörse|jobs?|karriere|career\w*)\b",
+    re.IGNORECASE)
+_PLACE_SEGMENT_RE = re.compile(
+    r"(?:köln|düsseldorf|hamburg|berlin|münchen|frankfurt(?: am main)?|stuttgart|nrw|wuppertal|essen|bonn"
+    r"|dortmund|duisburg|leverkusen|neuss|deutschland|germany|remote|home-?office|hybrid)"
+    r"(?:\s*[,/]\s*[\wäöüß .-]+)?", re.IGNORECASE)
+# Not a company: a job reference («JN-102026-7000001»), a place, the hours or the contract.
+_NOT_COMPANY_RE = re.compile(
+    r"^(?:[A-Z]{1,5}[-_ ]?\d[\d-]{3,}|standort\b.*|(?:voll|teil)zeit\b.*|minijob\b.*|(?:un)?befristet\b.*"
+    r"|ab sofort\b.*|.*\((?:m/w/d|w/m/d|d/m/w|m/w/x|all genders?)\).*)$", re.IGNORECASE)
+_EXTRA_BOARD_NAMES = {"bundesagenturfürarbeit", "jobbörse", "stellenwerk", "joinch", "ziprecruiter"}
+
+
+def _board_names() -> set[str]:
+    # Import here: job_title stays free of other bot modules at import time (see the module docstring).
+    from bot.generators.employer_scan import NON_EMPLOYER_DOMAINS
+    return {re.sub(r"[^a-z0-9]", "", d.rsplit(".", 1)[0]) for d in NON_EMPLOYER_DOMAINS} | _EXTRA_BOARD_NAMES
+
+
+def _is_board(segment: str) -> bool:
+    key = re.sub(r"\.(?:de|com|net|org|ch|at|co)$", "", segment.strip().lower())
+    return re.sub(r"[^a-z0-9äöüß]", "", key) in _board_names()
+
+
+def _company_ok(text: str) -> bool:
+    t = text.strip()
+    return len(t) >= 2 and not _NOT_COMPANY_RE.match(t) and not _PLACE_SEGMENT_RE.fullmatch(t) and not _is_board(t)
+
+
+def split_page_title(raw: str) -> tuple[str, str | None]:
+    """(role, company or None) from a page title. Board and section names after « | » go, a place
+    segment goes, the employer named after «bei» (with a legal form), «Karriere bei» or a dash
+    (the dash only when the title had a « | » suffix) is the company, else the last other segment.
+    A title that names no company comes back unchanged with None."""
+    text = " ".join((raw or "").split())
+    parts = [p.strip() for p in re.split(r"\s+\|\s+", text)]
+    head, tails = parts[0], parts[1:]
+    employer_tails = [t for t in tails
+                      if not (_is_board(t) or _GENERIC_SEGMENT_RE.match(t) or _PLACE_SEGMENT_RE.fullmatch(t))]
+    company = None
+    m = _KARRIERE_BEI_RE.search(head)
+    if m and _company_ok(m.group("c")):
+        company, head = m.group("c").strip(), head[:m.start()].rstrip(" -–|")
+    if company is None:
+        m = _BEI_COMPANY_RE.search(head)
+        if m and _company_ok(m.group("c")):
+            company = m.group("c").strip()
+    if company is None and tails:
+        m = _DASH_COMPANY_RE.match(head)
+        if m and _company_ok(m.group("company")):
+            head, company = m.group("title").strip(), m.group("company").strip()
+    if company is None and employer_tails:
+        last = employer_tails[-1]
+        # «Neuss, Deutschland - Muster GmbH»: the last place of a location list glued to the employer.
+        m = re.match(r"^(?P<place>[^-–]+?)\s+[-–]\s+(?P<rest>.+)$", last)
+        if m and (_PLACE_SEGMENT_RE.fullmatch(m.group("place"))
+                  or re.search(r",\s*(?:Deutschland|Germany)$", m.group("place"), re.IGNORECASE)):
+            last = m.group("rest")
+        if _company_ok(last):
+            company = last
+    if company is None and not tails:
+        return raw.strip(), None
+    return head, company

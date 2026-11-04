@@ -105,9 +105,11 @@ JOBSEARCH_CLIENT=<slug> /opt/jobsearch-autopilot/bin/js scripts/gmail_rest.py ch
 StepStone, XING and LinkedIn logins live in the browser profile
 `~/.playwright-mcp/<playwright_profile>`. A human signs in over VNC:
 
+The display and VNC are systemd services (`scripts/server/systemd/xvfb.service`,
+`x11vnc.service`), started at boot and restarted when they crash. Once per machine:
+`x11vnc -storepasswd /root/.vnc/passwd`, then `systemctl enable --now xvfb x11vnc`.
+
 ```bash
-Xvfb :99 -screen 0 1280x900x24 &
-x11vnc -display :99 -rfbauth /root/.vnc/passwd -localhost -forever &   # password: x11vnc -storepasswd
 cd /opt/jobsearch-autopilot
 DISPLAY=:99 JOBSEARCH_CLIENT=<slug> bin/js scripts/relogin.py
 # from the Mac: ssh -f -N -L 5901:127.0.0.1:5900 <server>; open vnc://localhost:5901, sign in in the browser window,
@@ -198,7 +200,7 @@ One-time operator steps (none of this is automated):
 The whole watcher pass runs under the same machine lock as the night runs (a lock busy
 for more than `JOBSEARCH_LOCK_WAIT` s means skipping this hour), and `run_agent.sh` now waits
 for the lock instead of skipping the run. Drafts are written by `claude -p` without MCP servers and built-in
-tools. Before the pass the data is pulled (`git pull --ff-only`), after it
+tools. Before the pass the data is pulled (`git pull --no-rebase`, a merge), after it
 `tracker.md` is committed and pushed; a failure of any of these steps and a failure to read mail
 become an alert in the evening summary mail. Pause from the bot (`/pause`) stops only
 sending, cards keep coming.
@@ -294,7 +296,7 @@ is busy. Spec: the same one, §7 (step 2c) and §15.
 
 One-time operator steps, in this order:
 
-1. Xvfb `:99` and x11vnc are already running (see «Re-login to portals»). x11vnc
+1. Xvfb `:99` and x11vnc run as systemd services (see «Re-login to portals»). x11vnc
    listens only on localhost and with a password (`-localhost -rfbauth /root/.vnc/passwd`),
    so from outside the display is reachable only through an SSH tunnel. The hint for the hand-off card in
    `/root/.claude-env`:
@@ -342,8 +344,10 @@ One-time operator steps, in this order:
 10 min before the deadline (from 19:45) the worker starts no new live application, the rest of
 the queue stays `queued` until the next day (one line about it in the journal);
 a hand-off that started earlier still waits until 19:55.
-Before the pass `git pull --ff-only` of the data, after a live application `tracker.md`
-is committed and pushed. Without `DISPLAY` or with a browser profile held by another
+Before the pass `git pull --no-rebase` of the data, after a live application `tracker.md`
+is committed and pushed. The worker's own package files (`apply_result.json`, screenshots,
+a resolved link in `lead.json`) stay uncommitted until the next agent run; the sync is a merge
+because `pull --rebase` refuses such a working tree (02.11.2026: every tracker push of a day failed). Without `DISPLAY` or with a browser profile held by another
 process (`scripts/relogin.py`, MCP), the pass exits with 0 and does not touch the queue;
 the profile is taken only when there are form leads in the queue. Without a bot token or
 `chat_id` the worker runs only in shadow mode: the hand-off card would not arrive.
@@ -371,8 +375,24 @@ DISPLAY=:99 /opt/jobsearch-autopilot/scripts/server/run_service.sh scripts/apply
 Shadow: without `send_policy: auto` in the client's `targeting.yaml` the worker only fills the form, takes
 the screenshot `applications/<date>/<package>/working/apply_form_filled.png` and writes `queue_dry.jsonl`.
 Live mode: `send_policy: auto` on the operator's word after reviewing the screenshots. Daily limit
-`daily_limits.form`. LinkedIn Easy Apply for these clients stays `held platform_off:linkedin`
-until `platforms.linkedin: on` appears in their `targeting.yaml`.
+`daily_limits.form`.
+
+**LinkedIn for these clients.** LinkedIn postings from the alert mails and the evening search go
+through discover, filter (channel `linkedin`) and tailoring like the others; Step 5b queues them as
+`linkedin_easy` (Easy Apply with the package's CV `*_CV.pdf` and the German Anschreiben) or
+`linkedin_offsite` (the worker reads the external Apply link under the login and fills the employer's
+form as `form`). Both carry platform `linkedin`, so the switch and the limit are per client:
+
+```yaml
+platforms: {linkedin: shadow}          # first: fill the modal, screenshot, no Submit (queue_dry.jsonl)
+daily_limits: {form: 8, linkedin: 5}   # without daily_limits.linkedin the lead is held platform_limit_zero:linkedin
+```
+
+Not declared or `off`: the lead is `held platform_off:linkedin` and goes to the manual list. `shadow`
+fills the Easy Apply modal without Submit even with `send_policy: auto`; `on` submits, at most
+2 per pass with 3 minutes between LinkedIn applications. The client's Playwright profile must be
+logged in to LinkedIn (`session_health`); screening questions are answered only from
+`profile.yaml → form_answers` and `experience_years`, everything else is a hand-off.
 
 ## Platforms with login: LinkedIn, freelancermap, GULP (stage 2d)
 
@@ -504,6 +524,94 @@ Not verified live, look with your own eyes, do not trust a green status:
   the counter «submitted today / limit», hand-off tabs are not stuck on the profile
   (the next pass does not start while one is open).
 
+## Upwork intake (stage 2e)
+
+What it does: Upwork "New job alert" mails become Telegram cards with a proposal ready to paste.
+The operator reads the job on Upwork, submits the proposal there himself and taps «Подав»
+(«Submitted»), which writes the tracker row. The server never submits anything, because Connects
+cost money and Upwork's terms forbid bots. It does not open Upwork at all, not even the
+click-tracking redirect of the job link: everything on the card comes from the alert mail.
+Code: `bot/generators/upwork_alert.py` (parser), `bot/upwork_intake.py` (filter, draft, pass),
+the hook `run_upwork` in `scripts/inbox_watch.py`.
+
+It is part of the hourly inbox pass (`jobsearch-inbox@<slug>`, no unit of its own): it runs after the
+watcher and shares its machine lock, `claude -p` runner, Telegram bot and dry-run switch. Clients
+with `telegram.mode: notify` do not get it.
+
+Per pass: list `in:anywhere from:<sender> newer_than:2d` in every configured mailbox (two days,
+whatever `--days` says), fetch the full text/plain part of mails not decided on yet, newest first:
+
+1. parse; a mail that is not the known one-job format (subject `New job alert: …`, one
+   `View job details` link, a title with its link) is recorded `unknown_format` and one alert goes
+   out per pass: Upwork changed the mail, look at the parser;
+2. dedup: a known message id is skipped silently, the same job from a second saved search
+   (normalised title, budget, country and the start of the excerpt) is recorded `duplicate`;
+3. a trashed alert is recorded as skipped (binned by the owner);
+4. deterministic filter, recorded with the reasons: payment verified, fixed budget at least
+   `min_fixed_usd`, hourly top at least `min_hourly_usd` (unknown amounts pass), a keyword of a
+   non-excluded track in the title, skills or snippet (an excluded track such as `ios_only` is
+   named in the reason when it was the only match);
+5. caps: past `max_cards_per_day` the job is recorded as skipped; past `max_cards_per_pass` or
+   `max_llm_per_pass` it waits for the next pass;
+6. one draft by `claude -p`: fit high/medium/low with a reason and an English proposal of at most
+   about 170 words built only from `candidate_brief.md`, no rate (Upwork has a bid field), no name from
+   `forbidden_names`. An invalid answer gets one corrective retry in the same pass, a second invalid
+   answer is recorded as skipped. A busy lock or a `claude` failure stops drafting for the pass and
+   leaves the mail for the next one. Low fit: recorded, no card;
+7. the card: title, budget and duration, client signals, skills, saved search, suggested bid
+   (`bid_hourly_usd` per hour, or the client's fixed budget), the fit reason, the job link as an anchor
+   in the text (a button with a 1 000-character URL can fail the send) and the proposal as a block
+   to copy. Buttons «Подав» and «Пропустити».
+
+Config, `targeting.yaml` of the client (the template has the block with `intake: false`):
+
+```yaml
+upwork:
+  intake: true                    # shadow = dry mode for this stage only; false (default) = off
+  require_payment_verified: true
+  min_fixed_usd: 500
+  min_hourly_usd: 50
+  max_cards_per_day: 6
+  max_cards_per_pass: 3
+  bid_hourly_usd: 120
+  max_llm_per_pass: 4
+```
+
+and in `search.yaml` the alert sender, with the source left `enabled: false`: the evening run reads
+enabled email sources only, and an Upwork job must never become a queue lead (there is no apply
+adapter, by design):
+
+```yaml
+sources:
+  upwork_alerts: {enabled: false, channel: email, sender: upwork@t.upwork.com}
+  upwork_plus_alerts: {enabled: false, channel: email, sender: donotreply@upwork.com, shared_sender: true, upwork: true}
+```
+
+The second source is for Freelancer Plus members: since November 2026 their alerts («This job was
+just posted and matches your alert settings») come from `donotreply@upwork.com` in a layout with
+direct job links. That address also sends client messages, so it is `shared_sender` (the watcher
+keeps reading it and drops the alerts by subject) and the intake asks Gmail only for its
+`subject:"new job alert"` mails. Any email source with `upwork: true` counts as an Upwork sender.
+
+On and off: `upwork.intake` in the data repository, pushed; the next hourly pass pulls it. `/pause`
+does not stop intake, because an intake card sends nothing; switch `intake` off instead. Shadow
+(spec §12): `intake: shadow` runs the stage while the watcher stays live, with the cards in
+`cards_dry.jsonl` and the decisions in `upwork_jobs_dry.jsonl`; the watcher's own dry run
+(`--dry-run` or `JOBSEARCH_INBOX_DRY_RUN_<SLUG>=1`) does the same for the whole pass. The first
+live pass then sees the last two days again.
+
+State in `<clients>/<slug>/var/state/`: `upwork_jobs.jsonl` (one record per decided mail: status
+`carded | skipped | duplicate | unknown_format`, reasons, fingerprint), the cards in `cards.jsonl`
+(`kind: upwork`). The journal line after `INBOX OK` is
+`UPWORK OK: carded=… skipped=… duplicates=… unknown=… llm=…`, with one `[upwork] skipped: …` line
+per mail that got no card. «Подав» writes the row `Upwork client (<country>) | <title> |
+contract: upwork | portal_submitted (портал)` with `wait reply until <date + followup_days>`; the
+notes keep the alert date, saved search and budget, and the tracking URL stays out of the tracker.
+The next inbox pass commits the row with the tracker.
+
+The alert shows only the start of the description, no screening questions and no Connects cost:
+read the job on Upwork before pasting, and adjust the draft when the full text says more.
+
 ## Where to look when something is wrong
 
 | What | Where |
@@ -530,7 +638,7 @@ fehlgeschlagen»: the repository did not pull, the run went on local state
 (trackers and configs may have been stale); the mail has `git status --short` of that
 repository. Typical cause: the same file was created both on the server and on the Mac.
 Compare with `cmp` against `git show origin/main:<path>`, put identical files into a stash,
-then `git pull --rebase`. Server changes that differ must not be thrown away.
+then `git pull --no-rebase --no-edit`. Server changes that differ must not be thrown away.
 
 ## Backup
 

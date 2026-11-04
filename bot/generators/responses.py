@@ -12,6 +12,14 @@ _REJECTED_KW  = ["absage", "nicht berücksichtigen", "anderweitig besetzt",
                   "nicht in die engere auswahl", "engere wahl", "müssen wir ihnen absagen",
                   "konnten wir uns nicht", "andere bewerber", "anderen kandidaten",
                   "nach unserem gespräch", "nach dem gespräch",
+                  # 02.11.2026: an Absage with «telefonische Sprechzeiten» in the signature read as an interview
+                  "für eine andere bewerbung entschieden", "für einen anderen bewerber",
+                  "für eine andere bewerberin", "für einen anderen kandidaten", "für eine andere kandidatin",
+                  "nicht weiter berücksichtigen",
+                  # 02.11.2026: «den Auswahlprozess mit anderen Bewerber:innen fortzusetzen» read as unknown
+                  "mit anderen bewerber", "mit anderen kandidat",
+                  # not «müssen wir Ihnen leider mitteilen»: a rescheduled interview says that too, and a
+                  # rejection is never shown, so a false one hides the mail
                   # англомовні ATS контрактного ринку (Greenhouse, Ashby, Lever)
                   "not to move forward", "not be moving forward",
                   "not moving forward", "decided to move forward with other",
@@ -27,6 +35,15 @@ _CONFIRMED_KW = ["eingangsbestätigung", "bewerbung erhalten", "bewerbung ist ei
                   "haben deine bewerbung erhalten", "erfolgreich eingegangen",
                   "thank you for applying", "received your application",
                   "thanks for applying"]
+# A real invitation: a slot, a link or a direct ask. An auto-acknowledgement that only mentions
+# interviews as a later step («we will select candidates for screening interviews», «folgt ein
+# Gespräch») has none of these and stays confirmed.
+_INVITE_KW = ["einladen", "einladung", "invite you to an interview", "invite you to a call", "invite you to a first",
+              "invite you for an interview", "invite you to interview", "schedule a", "schedule an",
+              "schedule your", "book a", "calendly", "terminvorschl", "termin vereinbaren", "available for an interview",
+              "available for a call", "available for a first", "zeit für ein gespräch",
+              "für ein gespräch zur verfügung", "choose a time", "pick a time", "zoom.us/",
+              "teams.microsoft.com", "meet.google.com"]
 _INFO_KW      = ["bitte senden sie", "könnten sie uns", "noch folgende unterlagen",
                   "gehaltsvorstellung", "weitere informationen", "bitte teilen sie mit"]
 
@@ -64,6 +81,7 @@ _REJECTED_KW_F  = [_fold(k) for k in _REJECTED_KW]
 _REJECTED_SOFT_KW_F = [_fold(k) for k in _REJECTED_SOFT_KW]
 _INTERVIEW_KW_F = [_fold(k) for k in _INTERVIEW_KW]
 _CONFIRMED_KW_F = [_fold(k) for k in _CONFIRMED_KW]
+_INVITE_KW_F = [_fold(k) for k in _INVITE_KW]
 _INFO_KW_F      = [_fold(k) for k in _INFO_KW]
 
 
@@ -71,11 +89,15 @@ def classify_response(body: str) -> str:
     """Classify an email body.
     Returns: rejected | interview | confirmed | info_request | unknown.
     Цитована історія листа не читається; явна відмова переважає співбесіду,
-    м'яке «leider» поступається їй."""
+    м'яке «leider» поступається їй. An acknowledgement that names interviews only as a later
+    step, without an invitation signal, is confirmed."""
     folded = _fold(strip_quoted(body))
     if any(kw in folded for kw in _REJECTED_KW_F):
         return "rejected"
-    if any(kw in folded for kw in _INTERVIEW_KW_F):
+    invited = any(kw in folded for kw in _INVITE_KW_F)
+    if invited or any(kw in folded for kw in _INTERVIEW_KW_F):
+        if not invited and any(kw in folded for kw in _CONFIRMED_KW_F):
+            return "confirmed"
         return "interview"
     if any(kw in folded for kw in _REJECTED_SOFT_KW_F):
         return "rejected"
@@ -205,6 +227,8 @@ def update_tracker_status(tracker_path: Path, company: str, new_status: str,
                     return False  # не відкочуємо фінальні статуси
                 cells[7] = f" {new_status} "
                 cells[8] = f" {update_date} "
+                if new_status in _TERMINAL_STATUSES:
+                    cells[9] = " — "   # a closed row has nothing left to wait for
                 lines[i] = "|".join(cells)
                 changed = True
 

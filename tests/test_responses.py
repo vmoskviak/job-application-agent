@@ -128,3 +128,47 @@ def test_soft_regret_yields_to_interview_but_hard_rejection_wins():
     assert classify_response("Sie sind leider nicht mit in die engere Wahl gekommen") == "rejected"
     assert classify_response("Leider können wir Ihnen nichts anbieten") == "rejected"
     assert classify_response("> leider absage") == "rejected"  # лист лише з цитати читається як є
+
+
+def test_auto_acknowledgement_that_mentions_future_interviews_is_confirmed():
+    from bot.generators.responses import classify_response
+    """29.10.2026: an applicant-platform auto-mail («Thank you for applying… under review… we will select
+    candidates for preliminary screening interviews») was read as an interview and got a reply card."""
+    auto_en = ("Hello there, Thank you for applying to Senior Android Engineer. Your profile is currently under "
+               "review. We're reviewing applications and will select the top matching candidates for preliminary "
+               "screening interviews. If you're among them, we'll contact you to arrange a convenient time.")
+    assert classify_response(auto_en) == "confirmed"
+    auto_de = ("Vielen Dank für Ihre Bewerbung. Wir haben Ihre Bewerbung erhalten und melden uns, sobald wir "
+               "sie gesichtet haben. Kommen Sie in die engere Auswahl, folgt ein persönliches Gespräch.")
+    assert classify_response(auto_de) == "confirmed"
+
+
+def test_invitation_after_a_thank_you_is_still_an_interview():
+    from bot.generators.responses import classify_response
+    assert classify_response("Thank you for applying! We would like to invite you to a first call. "
+                             "Please book a slot: https://calendly.com/contractco/30min") == "interview"
+    assert classify_response("Vielen Dank für Ihre Bewerbung. Gerne möchten wir Sie zu einem Gespräch "
+                             "einladen: Donnerstag 10 Uhr per Teams.") == "interview"
+    assert classify_response("Thanks for applying. Are you available for an interview on Monday?") == "interview"
+
+
+def test_rejection_with_phone_hours_in_the_signature_is_rejected():
+    """02.11.2026: a plain Absage («für eine andere Bewerbung entschieden») became an interview card
+    because the signature said «telefonische Sprechzeiten»."""
+    from bot.generators.responses import classify_response
+    body = ("Sehr geehrte Frau Muster,\nvielen Dank für Ihre Bewerbung. Nach sorgfältiger Prüfung müssen wir "
+            "Ihnen leider mitteilen, dass wir uns in diesem Auswahlprozess für eine andere Bewerbung entschieden "
+            "haben.\nMit freundlichen Grüßen\nBeispiel GmbH\ntelefonische Sprechzeiten Mo-Do 9-12")
+    assert classify_response(body) == "rejected"
+    assert classify_response("Wir haben uns für einen anderen Bewerber entschieden. Tel. Rückruf unter 0221") == "rejected"
+    assert classify_response("dass ich Sie in der engeren Auswahl nicht weiter berücksichtigen kann. "
+                             "Telefonisch erreichen Sie uns Mo-Fr") == "rejected"
+    assert classify_response("Dennoch haben wir uns nach reiflicher Überlegung entschieden, den Auswahlprozess "
+                             "für diese Position mit anderen Bewerber:innen fortzusetzen.") == "rejected"
+
+
+def test_rescheduled_interview_with_leider_mitteilen_stays_interview():
+    from bot.generators.responses import classify_response
+    body = ("Leider müssen wir Ihnen mitteilen, dass wir den Termin verschieben müssen. "
+            "Wir möchten Sie stattdessen am Donnerstag um 10 Uhr zu einem Gespräch einladen.")
+    assert classify_response(body) == "interview"

@@ -29,7 +29,7 @@ command -v claude >/dev/null 2>&1 || run npm install -g @anthropic-ai/claude-cod
 run "$ENGINE/.venv/bin/pip" install -q -r "$ENGINE/requirements.txt"
 run "$ENGINE/.venv/bin/playwright" install --with-deps chromium
 
-# systemd units for the hourly services (inbox watcher, dispatcher, browser worker, Telegram bot)
+# systemd units: hourly services (inbox watcher, dispatcher, browser worker, Telegram bot), display :99 and VNC
 run cp "$ENGINE"/scripts/server/systemd/*.service "$ENGINE"/scripts/server/systemd/*.timer /etc/systemd/system/
 run systemctl daemon-reload
 

@@ -165,6 +165,24 @@ _HEADER_BTN_SEL = ("[data-testid*='apply-button'], a:has-text('Zur Arbeitgeber-W
                    "button:has-text('Einfach bewerben'), a:has-text('Einfach bewerben')")
 
 
+def _employer_url(page, button) -> str:
+    """The employer's apply URL of an external XING posting: the href of «Zur Arbeitgeber-Website»
+    when it leads off XING, else an apply link in the page data (`employer_apply_url`, strict:
+    a careers homepage of the company profile is no apply form). "" when there is none."""
+    from bot.apply.job_boards import employer_apply_url, employer_url_ok
+
+    try:
+        href = button.get_attribute("href", timeout=2000) if button is not None else None
+    except Exception:  # noqa: BLE001
+        href = None
+    if href and employer_url_ok(href):
+        return href
+    try:
+        return employer_apply_url(page.content(), min_score=2) or ""
+    except Exception:  # noqa: BLE001
+        return ""
+
+
 def _main_apply_button(page):
     """(locator | None, kind) для кнопки саме цієї вакансії, див. pick_header_button."""
     try:
@@ -542,6 +560,7 @@ def apply(page, url: str, app_dir: Path, attachments: list[Path], dry_run: bool,
         return ApplyResult(
             "form_unsupported", "xing", url, [shot],
             reason=f"pre-flight classified as {kind}",
+            employer_url=_employer_url(page, None) if kind == "external_ats" else "",
         )
 
     forms.accept_cookies(page)
@@ -554,13 +573,14 @@ def apply(page, url: str, app_dir: Path, attachments: list[Path], dry_run: bool,
     clicked = False
     main_btn, btn_kind = _main_apply_button(page)
     if btn_kind == "external" or (btn_kind == "none" and job_title):
-        # Під заголовком «Zur Arbeitgeber-Website» або взагалі нічого: детектор
-        # бачив «Einfach bewerben» зі стрічки «Ähnliche Jobs» (07.10.2026).
-        # Нічого не клікати, лінк іде оператору.
+        # «Zur Arbeitgeber-Website» under the title, or nothing at all: the detector saw an
+        # «Einfach bewerben» of the «Ähnliche Jobs» strip (07.10.2026). Nothing is clicked; the
+        # employer link goes into the result for the form worker.
         shot = forms.screenshot(page, app_dir, "apply_preflight.png")
         return ApplyResult(
             "form_unsupported", "xing", url, [shot],
-            reason="під заголовком немає Easy Apply: зовнішня подача на сайті роботодавця",
+            reason="no Easy Apply under the title: external application on the employer site",
+            employer_url=_employer_url(page, main_btn),
         )
     if main_btn is not None:
         try:

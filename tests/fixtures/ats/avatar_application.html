@@ -1,0 +1,36 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Contract Co application</title></head>
+<body>
+<!-- Synthetic web-component form, shaped like the SmartRecruiters "Personal information" step of
+     30.10.2026: an unlabelled avatar upload that takes images only, and a "Resume" dropzone whose
+     input sits too deep inside the box for the visibility check. -->
+<h1>Senior Android Engineer</h1>
+<avatar-upload></avatar-upload>
+<form-field label="First name" required></form-field>
+<form-field label="Last name" required></form-field>
+<deep-dropzone label="Resume" required></deep-dropzone>
+<script>
+customElements.define("avatar-upload", class extends HTMLElement {
+  connectedCallback() {
+    const r = this.attachShadow({mode: "open"});
+    r.innerHTML = '<div style="width:96px;height:96px;border-radius:50%;border:1px solid">'
+      + '<input type="file" accept=".bmp,.gif,.jfif,.jpeg,.jpg,.png,.tif,.tiff,.webp" style="display:none"></div>';
+  }
+});
+customElements.define("form-field", class extends HTMLElement {
+  connectedCallback() {
+    const r = this.attachShadow({mode: "open"});
+    r.innerHTML = '<div><input type="text" style="width:300px"></div>';
+    if (this.hasAttribute("required")) r.querySelector("input").setAttribute("aria-required", "true");
+  }
+});
+customElements.define("deep-dropzone", class extends HTMLElement {
+  connectedCallback() {
+    const r = this.attachShadow({mode: "open"});
+    r.innerHTML = '<div style="width:400px;height:60px;border:1px dashed">Drop your file here'
+      + '<div><div><div><div><div><input type="file" style="display:none"></div></div></div></div></div></div>';
+  }
+});
+</script>
+<button type="submit">Next</button>
+</body></html>

@@ -1,26 +1,33 @@
 #!/usr/bin/env python3
-"""Погодинний прохід по пошті контрактного клієнта: класи, трекер, картки в Telegram, follow-ups.
+"""Hourly pass over the contract client's mail: classes, tracker, Telegram cards, follow-ups.
 
     js scripts/inbox_watch.py [--days 2] [--dry-run]
 
-Листи: відповіді на подачі через employer_scan (домени трекера й ATS, прочісування
-jobs) плюс запити по доменах платформ (спека фази 2, §8). Чернетки пише claude -p
-під спільним локом машини. Без токена бота або chat_id картки лягають у
-var/state/cards_dry.jsonl, трекер оновлюється однаково; --dry-run або
-JOBSEARCH_INBOX_DRY_RUN_<SLUG>=1 (або =1 без суфікса для всіх клієнтів) в оточенні
-(тіньовий тиждень) не чіпає ні трекер, ні пошту.
-accounts.yaml → telegram.mode: notify (клієнти з ранковим агентом): лише текстові
-сповіщення оператору про співбесіди й запити, без трекера, чернеток, follow-up і лока.
-Увесь прохід іде під спільним локом машини, тож із нічними ранами не перетинається;
-зайнятий лок означає пропуск цієї години. Перед проходом дані підтягуються (ff-only),
-після нього трекер комітиться й пушиться; збої йдуть алертом у чергу зведеного листа.
+Mails: replies to applications through employer_scan (tracker and ATS domains, the jobs sweep)
+plus queries over platform domains (phase 2 spec, §8). Drafts are written by claude -p under the
+shared machine lock. Without the bot token or chat_id the cards land in var/state/cards_dry.jsonl
+and the tracker is updated all the same; --dry-run or JOBSEARCH_INBOX_DRY_RUN_<SLUG>=1 (or =1
+without the suffix for every client of the machine) in the environment (shadow week) touches
+neither the tracker nor the mail.
+accounts.yaml → telegram.mode: notify (clients with the morning agent): text notifications to the
+operator about interviews and requests only, without tracker, drafts, follow-ups and lock.
+Stage 2e, after the watcher: Upwork alert mails become proposal cards (bot.upwork_intake) when
+targeting.yaml → upwork.intake is true (or shadow) and search.yaml names an Upwork alert sender
+(sources.upwork_alerts.sender, plus any source with `upwork: true`).
+The whole pass runs under the shared machine lock, so it never overlaps the night runs; a busy
+lock means skipping this hour. Before the pass the data is pulled (ff-only), after it the
+tracker is committed and pushed; failures go as alerts into the summary queue.
 """
 from __future__ import annotations
 
 import argparse
+import fcntl
 import os
 import subprocess
 import sys
+import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -45,9 +52,12 @@ def alert_senders(c) -> list[str]:
     власні джерела клієнта (search.yaml → sources з channel email)."""
     from alert_volume import ALL_SENDERS
 
+    # shared_sender: the address also carries personal messages (freelance.de noreply@), so the watcher
+    # reads it and tells alerts apart by subject instead of excluding the sender
     own = [str(src.get("sender")).strip()
            for src in (c.search.get("sources") or {}).values()
-           if isinstance(src, dict) and src.get("channel") == "email" and src.get("sender")]
+           if isinstance(src, dict) and src.get("channel") == "email" and src.get("sender")
+           and not src.get("shared_sender")]
     return list(dict.fromkeys([*ALL_SENDERS, *own]))
 
 
@@ -79,6 +89,144 @@ def collect(c: _client.Client, days: int) -> list[dict]:
     return items
 
 
+# An Upwork job older than two days has its proposals already, whatever --days says
+UPWORK_DAYS = 2
+
+
+def upwork_senders(c) -> list[tuple[str, bool]]:
+    """(sender, shared) of the Upwork alert sources: search.yaml → sources.upwork_alerts and every
+    other email source with `upwork: true` (04.11.2026: Freelancer Plus alerts come from
+    donotreply@upwork.com, which also sends client messages, hence shared_sender there). The sources
+    stay enabled: false: the evening run reads enabled email sources only, and an Upwork job must
+    never become a queue lead."""
+    out: list[tuple[str, bool]] = []
+    for key, src in (c.search.get("sources") or {}).items():
+        if not isinstance(src, dict) or not (key == "upwork_alerts" or src.get("upwork") is True):
+            continue
+        sender = str(src.get("sender") or "").strip()
+        if sender and sender not in (s for s, _ in out):
+            out.append((sender, bool(src.get("shared_sender"))))
+    return out
+
+
+def text_plain(payload: dict) -> str:
+    """The first text/plain part of a Gmail message, whole and with its line breaks. The Upwork
+    parser needs both: employer_scan._plain_body collapses whitespace and the watcher keeps 3 000
+    characters, while the job block of an alert starts after about 8 000."""
+    import base64
+
+    data = (payload.get("body") or {}).get("data")
+    if payload.get("mimeType") == "text/plain" and data and not payload.get("filename"):
+        return base64.urlsafe_b64decode(data + "==").decode("utf-8", "replace")
+    for part in payload.get("parts") or []:
+        text = text_plain(part)
+        if text:
+            return text
+    return ""
+
+
+def upwork_queries(senders: list[tuple[str, bool]], days: int = UPWORK_DAYS) -> list[str]:
+    """One Gmail query per sender. A shared sender also delivers client messages and invoices:
+    only its "New job alert" mails go to the intake, the rest would be unknown formats."""
+    return [f"in:anywhere from:{sender}" + (' subject:"new job alert"' if shared else "") + f" newer_than:{days}d"
+            for sender, shared in senders]
+
+
+def collect_upwork(c: _client.Client, senders: list[tuple[str, bool]], known: set[str],
+                   days: int = UPWORK_DAYS) -> list[dict]:
+    """Alert mails of the last `days` days in every configured mailbox (wherever Upwork delivers),
+    in:anywhere like the watcher. A body is fetched only for a mail the intake has not decided on:
+    a real alert weighs about 95 KB and the pass runs hourly."""
+    import employer_scan as es  # reads the client config at import
+
+    from bot.generators.employer_scan import scan_accounts
+    from bot.telegram.cards import gmail_url
+
+    seen = set(known)
+    items: list[dict] = []
+    for acc, query in ((a, q) for a in scan_accounts(c.gmail_aliases) for q in upwork_queries(senders, days)):
+        for mid in es._ids(acc, query):
+            if mid in seen:
+                continue
+            seen.add(mid)
+            msg = es._get(acc, f"messages/{mid}", format="full")
+            payload = msg.get("payload") or {}
+            hdr = {h["name"]: h["value"] for h in payload.get("headers") or []}
+            items.append({"message_id": mid, "account": acc, "date": hdr.get("Date", ""),
+                          "subject": hdr.get("Subject", ""), "from": hdr.get("From", ""),
+                          "body": text_plain(payload), "trashed": "TRASH" in (msg.get("labelIds") or []),
+                          "mail_url": gmail_url(c.gmail(acc)["address"], mid)})
+    return items
+
+
+def run_upwork(c: _client.Client, llm, transport, chat_id: int | None, state: Path, dry_run: bool,
+               alert) -> None:
+    """Stage 2e after the watcher, under the same lock and LLM runner: only with
+    targeting.yaml → upwork.intake true or shadow and an Upwork alert sender in search.yaml. A failure becomes an
+    alert and never spoils the watcher's pass. /pause does not apply: an intake card sends nothing."""
+    from bot.upwork_intake import intake_config, processed_ids, run_intake
+    from bot.upwork_submit import submit_config
+
+    cfg = intake_config(c.targeting, lang=c.report_lang, dry_run=dry_run)
+    senders = upwork_senders(c)
+    if cfg is None or not senders:
+        return
+    sub = submit_config(c.targeting, lang=c.report_lang, dry_run=dry_run)
+    try:
+        items = collect_upwork(c, senders, processed_ids(state, dry_run))
+        res = run_intake(cfg, items, c.tracks.get("tracks") or {}, state, transport, chat_id, llm,
+                         c.brief, c.profile, _today(), queue=sub is not None)
+    except Exception as e:  # noqa: BLE001 — Gmail, OAuth or a parser bug: the operator hears of it
+        print(f"[upwork] intake failed: {e}", file=sys.stderr)
+        alert("Upwork intake failed (Gmail or parser, see the journal)", str(e))
+        return
+    for s in res.skipped:
+        print(f"[upwork] skipped: {s}", file=sys.stderr)
+    if res.unknown:
+        alert(f"Upwork intake: unknown alert format in {len(res.unknown)} mail(s), check the parser",
+              "\n".join(f"{u['message_id']} {u['subject']}: {u['reason']}" for u in res.unknown))
+    print(f"UPWORK OK: carded={len(res.carded)} skipped={len(res.skipped)} duplicates={res.duplicates} "
+          f"unknown={len(res.unknown)} llm={res.llm_calls}")
+    if sub is not None:
+        submit_upwork(c, sub, llm, transport, chat_id, state, alert)
+
+
+def submit_upwork(c: _client.Client, sub, llm, transport, chat_id: int | None, state: Path, alert) -> None:
+    """Auto-submit of the queued Upwork jobs (targeting.yaml → upwork.submit, the owner's decision of
+    02.11.2026) in a headed browser on the server display with the owner's Upwork login in
+    var/browser/upwork (scripts/upwork_login.py). Sent proposals get their tracker rows here."""
+    from datetime import datetime
+
+    from bot.state import JsonlStore
+    from bot.telegram.dispatch import upwork_row
+    from bot.upwork_submit import PlaywrightDriver, http_head, queued, run_submit
+
+    if not queued(JsonlStore(state / "cards.jsonl")):
+        return
+    profile_dir = c.var / "browser" / "upwork"
+
+    def tracker_row(card: dict) -> None:
+        upwork_row(c.tracker, card, _today().isoformat(), sub.followup_days, "contract",
+                   "submitted by the server")
+
+    try:
+        res = run_submit(sub, state, transport, chat_id, llm, c.brief, c.profile, tracker_row,
+                         lambda: PlaywrightDriver(profile_dir, shots=state / "upwork_shots"), http_head,
+                         datetime.now().astimezone())
+    except Exception as e:  # noqa: BLE001 — a bug must not cost the watcher's pass
+        print(f"[upwork] submit failed: {e}", file=sys.stderr)
+        alert("Upwork submit failed (see the journal)", str(e))
+        return
+    for d in res.deferred + res.to_owner + res.declined:
+        print(f"[upwork] {d}", file=sys.stderr)
+    for a in res.alerts:
+        alert(a)
+    if res.submitted and not sub.dry_run:
+        push_tracker(c.root, f"{c.slug}: Upwork proposals sent by the server: {len(res.submitted)}", alert)
+    print(f"UPWORK SUBMIT OK: submitted={len(res.submitted)} to_owner={len(res.to_owner)} "
+          f"declined={len(res.declined)} deferred={len(res.deferred)} llm={res.llm_calls}")
+
+
 def queue_alert(message: str, tail: str = "") -> None:
     """Алерт у чергу зведеного листа (send_alert.py --queue); однакові причини там злипаються."""
     subprocess.run([sys.executable, str(ENGINE / "scripts" / "server" / "send_alert.py"),
@@ -102,32 +250,88 @@ def _git(root: Path, *args: str) -> subprocess.CompletedProcess:
     return subprocess.run(["git", "-C", str(root), *args], capture_output=True, text=True, check=False)
 
 
+SYNC_LOCK = "jobsearch-sync.lock"
+SYNC_WAIT_SECONDS = 120.0
+
+
+@contextmanager
+def repo_lock(root: Path, wait: float = SYNC_WAIT_SECONDS) -> Iterator[None]:
+    """One git sync (pull, commit, push) at a time per repository. The hourly services of several
+    clients start in the same second and share one data repository: on 29.10.2026 two apply
+    workers pulled at once and both failed with «Cannot fast-forward to multiple branches».
+    TimeoutError when another sync holds the lock longer than `wait` seconds."""
+    gitdir = _git(root, "rev-parse", "--absolute-git-dir").stdout.strip()
+    path = Path(gitdir) / SYNC_LOCK if gitdir else Path(root) / f".{SYNC_LOCK}"
+    with open(path, "a", encoding="utf-8") as fh:
+        deadline = time.monotonic() + wait
+        while True:
+            try:
+                fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                if time.monotonic() >= deadline:
+                    raise TimeoutError(f"git sync lock busy for {wait:.0f}s: {path}") from None
+                time.sleep(0.5)
+        try:
+            yield
+        finally:
+            fcntl.flock(fh, fcntl.LOCK_UN)
+
+
+# The server's working tree is rarely clean between agent runs: the browser worker writes apply results,
+# screenshots and resolved links into packages the morning run committed, and only the next run commits
+# them. `pull --rebase` refuses such a tree outright (02.11.2026: seven failed tracker pushes in a day),
+# `pull --ff-only` refuses once a push has failed. A merge leaves unrelated changes alone and stops only
+# when an incoming commit touches a locally changed file, which is a conflict worth an alert.
+PULL = ("pull", "--no-rebase", "--no-edit", "-q")
+
+
+def _pull(root: Path) -> subprocess.CompletedProcess:
+    proc = _git(root, *PULL)
+    if proc.returncode != 0:
+        _git(root, "merge", "--abort")  # a stopped merge must not stay half-done for the next pass
+    return proc
+
+
 def pull_data(root: Path, alert) -> bool:
-    """Свіжі дані перед проходом: ff-only, щоб нічого не ребейзити й не ховати в stash.
-    Збій → прохід на локальному стані й алерт (як у run_agent.sh)."""
-    proc = _git(root, "pull", "--ff-only", "-q")
+    """Fresh data before the pass (a merge, see PULL). On failure the pass runs on local state and
+    the operator gets an alert (like run_agent.sh)."""
+    try:
+        with repo_lock(root):
+            proc = _pull(root)
+    except TimeoutError as e:
+        proc = subprocess.CompletedProcess(["git", "pull"], 1, "", str(e))
     if proc.returncode == 0:
         return True
     print(f"[inbox] git pull failed: {proc.stderr.strip()[-300:]}", file=sys.stderr)
-    alert("Inbox-Watch: Datenpull fehlgeschlagen (git pull --ff-only), Lauf auf lokalem Stand",
+    alert("Inbox-Watch: Datenpull fehlgeschlagen (git pull), Lauf auf lokalem Stand",
           _git(root, "status", "--short").stdout + proc.stderr)
     return False
 
 
 def push_tracker(root: Path, message: str, alert) -> bool:
-    """Коміт лише tracker.md, pull --rebase, push. Невдалий rebase відкочується, щоб репозиторій
-    не лишався в недоребейзеному стані для наступного проходу чи нічного рану."""
+    """Commits only tracker.md, pulls (a merge, see PULL) and pushes. A stopped merge is aborted, so the
+    repository is not left half-merged for the next pass or the night run.
+    The whole sequence runs under repo_lock, like pull_data."""
     if not _git(root, "status", "--porcelain", "--", "tracker.md").stdout.strip():
         return True
+    try:
+        with repo_lock(root):
+            return _commit_and_push(root, message, alert)
+    except TimeoutError as e:
+        alert("Inbox-Watch: git push fehlgeschlagen (sync lock)", str(e))
+        return False
+
+
+def _commit_and_push(root: Path, message: str, alert) -> bool:
     for cmd in (("add", "tracker.md"), ("commit", "-q", "-m", message)):
         proc = _git(root, *cmd)
         if proc.returncode != 0:
             alert("Inbox-Watch: git push fehlgeschlagen (commit)", proc.stdout + proc.stderr)
             return False
-    proc = _git(root, "pull", "--rebase", "-q")
+    proc = _pull(root)
     if proc.returncode != 0:
-        _git(root, "rebase", "--abort")
-        alert("Inbox-Watch: git push fehlgeschlagen (pull --rebase, abgebrochen)",
+        alert("Inbox-Watch: git push fehlgeschlagen (pull, abgebrochen)",
               _git(root, "status", "--short").stdout + proc.stderr)
         return False
     proc = _git(root, "push", "-q")
@@ -205,6 +409,7 @@ def _pass(c: _client.Client, days: int, dry_run: bool) -> int:
         print(f"[inbox] skipped: {s}", file=sys.stderr)
     print(f"INBOX OK: carded={len(res.carded)} updates={len(res.tracker_updates)} "
           f"followups={len(res.followups_sent)} llm={res.llm_calls} skipped={len(res.skipped)}")
+    run_upwork(c, llm, transport, tg["chat_id"], state, dry_run, queue_alert)
     return 0
 
 

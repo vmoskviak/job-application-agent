@@ -1,0 +1,13 @@
+# Virtual display :99 for the headed browser worker and the VNC hand-offs.
+# A crashed or rebooted display used to stay down until someone restarted it by hand.
+[Unit]
+Description=Xvfb virtual display :99 (headed apply worker, VNC hand-offs)
+After=network.target
+
+[Service]
+ExecStart=/usr/bin/Xvfb :99 -screen 0 1280x900x24
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

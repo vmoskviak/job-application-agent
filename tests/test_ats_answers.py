@@ -7,9 +7,11 @@ from bot.apply.ats_answers import (
     Answer,
     AnswerContext,
     answer_for,
+    answer_language,
     clean_llm_answer,
     earliest_start,
     llm_allowed,
+    llm_answer_problem,
     llm_prompt,
 )
 from bot.apply.ats_fields import Field
@@ -69,14 +71,51 @@ def test_ack_checks_and_date(ctx, field):
     assert earliest_start(date(2026, 10, 27), "ab sofort") == date(2026, 10, 27)
 
 
+def test_optional_consent_to_future_positions_stays_unticked(ctx, field):
+    """02.11.2026: a freelance form («storing my application documents for up to 12 months … future positions»)
+    and a career page («Bewerbung … für weitere Stellenangebote an die Unternehmen innerhalb der …
+    Group übermittelt») got ticked. Optional consents beyond this application are the candidate's."""
+    future_use = ("I consent to Example GmbH storing my application documents for up to 12 months after the conclusion "
+             "of the application procedure in order to consider me for suitable future positions. This consent is "
+             "given voluntarily.")
+    assert answer_for(field(future_use, type="checkbox", required=False), ctx) == Answer("skip")
+    group = ("Ich bin damit einverstanden, dass meine Bewerbung zur Prüfung für weitere Stellenangebote an die "
+             "Unternehmen innerhalb der Example Group (siehe Datenschutzerklärung) übermittelt wird.")
+    assert answer_for(field(group, type="checkbox", required=False), ctx) == Answer("skip")
+    # without a consent word it is a plain choice the filler leaves alone (no rule, no answer)
+    assert answer_for(field("Ich möchte in den Talentpool aufgenommen werden.", type="checkbox", required=False),
+                      ctx) in (None, Answer("skip"))
+
+
+def test_required_privacy_acknowledgement_is_ticked(ctx, field):
+    """The required one on the same page («… zur Kenntnis genommen*») stayed empty: «Kenntnis» was no ack word."""
+    lex = ("Ich habe die Hinweise zur Verarbeitung der Daten durch die Example Group und die Hinweise zur "
+           "Datenverarbeitung durch die Beispiel AG zur Kenntnis genommen.*")
+    assert answer_for(field(lex, type="checkbox", required=True), ctx) == Answer("check")
+    assert answer_for(field("Kenntnis genommen", type="checkbox", required=True), ctx) == Answer("check")
+    assert answer_for(field("Ich bin mit der Verarbeitung meiner Daten für dieses Bewerbungsverfahren "
+                            "einverstanden.", type="checkbox", required=True), ctx) == Answer("check")
+
+
+def test_profile_no_rule_beats_a_consent_checkbox(ctx, field):
+    from dataclasses import replace
+
+    profile = {**ctx.profile, "form_answers": [{"pattern": "newsletter-artige|partnerunternehmen", "choice": "no"}]}
+    c = replace(ctx, profile=profile)
+    text = "I agree that my data may be shared with Partnerunternehmen for recruiting purposes."
+    assert answer_for(field(text, type="checkbox", required=False), c) == Answer("skip")
+
+
 def test_earliest_start_notice_words():
     """Фінальне рев'ю, M4: голе «notice» не термін; «no notice period» і «immediately» це сьогодні."""
     today = date(2026, 10, 27)
     assert earliest_start(today, "no notice period") == today
     assert earliest_start(today, "available immediately") == today
     assert earliest_start(today, "sofort, kein notice period") == today
-    assert earliest_start(today, "notice period 3 months") == date(2026, 11, 24)
-    assert earliest_start(today, "6 Wochen Kündigungsfrist") == date(2026, 11, 24)
+    # a stated term counts as written (29.10.2026); before, any notice wording meant +28 days
+    assert earliest_start(today, "notice period 3 months") == date(2027, 1, 25)
+    assert earliest_start(today, "6 Wochen Kündigungsfrist") == date(2026, 12, 8)
+    assert earliest_start(today, "notice period") == date(2026, 11, 24)
     assert earliest_start(today, "") == today
 
 
@@ -317,3 +356,167 @@ def test_years_zero_and_broken_entries(ctx, field):
     ]
     assert answer_for(field("How many years of experience do you have with Rust?"), ctx) == Answer("text", "0")
     assert answer_for(field("How many years of experience do you have with Go?"), ctx) is None
+
+
+def test_contract_salary_annual_hourly_daily(ctx, field):
+    """Contract market: an annual question or a bare numeric field gets annual_salary as digits; a
+    numeric hourly or day-rate field gets the rate as a number; free text keeps the hourly sentence."""
+    ctx.profile["annual_salary"] = "100000"
+    ctx.profile["rate"] = {**(ctx.profile.get("rate") or {}), "hourly_target": 95, "daily_target": 760,
+                           "currency_default": "EUR"}
+    assert answer_for(field("Was ist Ihre jährliche Gehaltserwartung in EUR?"), ctx) == Answer("text", "100000")
+    assert answer_for(field("Expected annual salary"), ctx) == Answer("text", "100000 EUR")
+    assert answer_for(field("Salary expectation", type="number"), ctx) == Answer("text", "100000")
+    assert answer_for(field("Expected hourly rate (EUR)", type="number"), ctx) == Answer("text", "95")
+    assert answer_for(field("Day rate expectation", type="number"), ctx) == Answer("text", "760")
+    assert answer_for(field("Expected compensation"), ctx) == Answer("text", "95 EUR per hour (B2B contract)")
+
+
+def test_contract_annual_question_without_profile_value_keeps_rate(ctx, field):
+    ctx.profile["annual_salary"] = ""
+    assert answer_for(field("Expected annual salary"), ctx) == Answer("text", "95 EUR per hour (B2B contract)")
+
+
+def test_earliest_start_counts_stated_weeks_and_days():
+    today = date(2026, 10, 29)
+    assert earliest_start(today, "within 2 weeks, full-time") == date(2026, 11, 12)
+    assert earliest_start(today, "in 10 days") == date(2026, 11, 8)
+    assert earliest_start(today, "innerhalb von 3 Wochen") == date(2026, 11, 19)
+    assert earliest_start(today, "about 4 weeks after signing") == date(2026, 11, 26)
+
+
+# ---- A model answer is checked before it is typed into the form
+
+# 30.10.2026: the brief is in Ukrainian, the form field just «Nachricht», and the model replied with a
+# clarification that echoed the prompt's rules. This text was typed into a German employer form.
+UK_META_REPLY = (
+    "Поле «Nachricht» не містить конкретного питання, тож уточніть, що саме написати. Формат "
+    "відповіді: німецькою, до 600 знаків, plain text, без тире-зв'язок, без заборонених фраз, без згадки "
+    "поточного роботодавця й без тверджень про вже виконані дії."
+)
+UK_META_TAIL = (
+    "відповідь: німецькою, до 600 знаків, plain text, без тире-зв'язок, без заборонених фраз, без згадки "
+    "поточного роботодавця й без тверджень про вже виконані дії."
+)
+
+
+def test_llm_answer_problem_accepts_real_answers():
+    assert llm_answer_problem(
+        "Ich bringe acht Jahre Erfahrung mit Android und Kotlin mit und freue mich auf ein Gespräch.",
+        "Ihre Nachricht") == ""
+    assert llm_answer_problem(
+        "I have led mobile teams of five engineers and shipped apps used by millions of people.",
+        "Why do you want to join Contract Co?") == ""
+    # Cyrillic is fine when the question itself is Cyrillic.
+    assert llm_answer_problem("Маю вісім років досвіду з Android.", "Чому ви хочете працювати у нас") == ""
+
+
+def test_llm_answer_problem_rejects_the_ukrainian_meta_reply():
+    assert llm_answer_problem(UK_META_REPLY, "Nachricht")
+    assert llm_answer_problem(UK_META_TAIL, "Nachricht")
+    # Each check alone catches the tail too, so one weak check does not let it through.
+    assert llm_answer_problem(UK_META_TAIL, "Чому ви хочете працювати у нас")
+
+
+def test_llm_answer_problem_rejects_cyrillic_on_a_latin_form():
+    assert "cyrillic" in llm_answer_problem("Маю вісім років досвіду з Android.", "Nachricht")
+
+
+def test_llm_answer_problem_rejects_echoed_instructions():
+    for text in ("Plain text, at most 600 characters, no greetings.",
+                 "Hier ist meine Antwort mit höchstens 600 Zeichen: Ich freue mich auf Ihre Rückmeldung.",
+                 "Output only the answer: I like Android.",
+                 "Answer in German, plain text: Ich habe Erfahrung mit Kotlin."):
+        assert "instructions" in llm_answer_problem(text, "Your message"), text
+
+
+def test_llm_answer_problem_rejects_questions_back():
+    for text in ("Could you clarify what this field expects?",
+                 "Was genau soll ich in diesem Feld schreiben?",
+                 "Please specify the question so I can write a fitting answer.",
+                 "I am not sure what to write here, please let me know the question."):
+        assert "question" in llm_answer_problem(text, "Message"), text
+
+
+def test_llm_answer_problem_rejects_empty():
+    assert llm_answer_problem("", "Nachricht") == "empty"
+    assert llm_answer_problem("   ", "Nachricht") == "empty"
+
+
+def test_answer_language_from_question_then_package():
+    assert answer_language("Ihre Nachricht", "en") == "German"
+    assert answer_language("Warum möchten Sie bei uns arbeiten?", "en") == "German"
+    assert answer_language("Why do you want to join us?", "de") == "English"
+    assert answer_language("Your message", "de") == "English"
+    # No word that tells: the package language decides.
+    assert answer_language("Xyz", "de") == "German"
+    assert answer_language("Xyz", "en") == "English"
+
+
+def test_llm_prompt_names_the_language_and_forbids_questions(ctx, field):
+    p = llm_prompt(field("Nachricht", tag="textarea"), ctx, "Бриф кандидата")
+    assert "in German" in p and "Бриф кандидата" in p
+    assert "brief may be written in another language" in p
+    assert "never ask" in p.lower() and "cover note" in p.lower()
+    p = llm_prompt(field("Why do you want to join us?", tag="textarea"), ctx, "brief")
+    assert "in English" in p
+
+
+AUTH_US = [
+    {"pattern": r"(?:authori[sz]ed|eligible).{0,200}\bunited states\b", "choice": "no", "answer": "No"},
+    {"pattern": r"(?:sponsor|visa).{0,200}\bunited states\b", "choice": "yes", "answer": "Yes"},
+]
+
+
+def test_job_outside_eu_names_its_country(ctx, field):
+    """A Greenhouse job in New York (03.11.2026): «eligible to work in the country you are applying?» and
+    «Will you need a visa sponsorship?» name no country. A job with one known non-EU country gets it in
+    the tag, so the client's US rules answer; an unknown or mixed place still goes to the operator."""
+    ctx.profile["form_answers"] = AUTH_EU + AUTH_US
+    eligible = field("Are you eligible to work in the country you are applying?", combobox=True)
+    visa = field("Will you need a visa sponsorship?", combobox=True)
+    ctx.lead["location"] = "New York, United States"
+    assert answer_for(eligible, ctx) == Answer("text", "No")
+    assert answer_for(visa, ctx) == Answer("text", "Yes")
+    for lead in ({"location": "Toronto, ON"}, {"location": "New York, United States; Berlin, Germany"},
+                 {"location": "", "remote_scope": "global"}):
+        ctx.lead = {"company": "Contract Co", **lead}
+        assert answer_for(eligible, ctx) is None, lead
+        assert answer_for(visa, ctx) is None, lead
+    ctx.lead = {"company": "Contract Co", "location": "Berlin, Germany"}
+    assert answer_for(visa, ctx) is None   # EU tag, and AUTH_EU has no sponsorship rule
+    assert answer_for(eligible, ctx) is None   # AUTH_EU wants «authorized», not «eligible»
+
+
+def test_greenhouse_us_eeo_questions_decline(ctx, field):
+    """A US Greenhouse form (03.11.2026): these three were read as plain selects and went to hand-off."""
+    for label in ("Indicate Ethnic group:",
+                  "If you believe you belong to any of the categories of protected Veterans, please indicate "
+                  "by checking the appropriate box below.",
+                  "Please review Form CC-305 at the link above before checking one of the boxes below."):
+        assert answer_for(field(label, combobox=True), ctx) == Answer("decline"), label
+    f = field("Disability status", type="radio", group="Disability status",
+              options=["Yes, I have a disability", "No, I do not have a disability", "I do not want to answer"])
+    assert answer_for(f, ctx) == Answer("option", "I do not want to answer")
+
+
+def test_optional_follow_up_of_a_yes_answer_is_skipped(ctx, field):
+    label = ("(Required if you answered 'yes' to \"Have you previously worked at Example Corp?\") "
+             "What was your Example Corp work email?")
+    assert answer_for(field(label, required=False), ctx) == Answer("skip")
+    assert answer_for(field("If so, which team?", required=False), ctx) == Answer("skip")
+    assert answer_for(field("Email", type="email", required=False), ctx) == Answer("text", ctx.profile["email"])
+
+
+def test_optional_storage_for_future_positions_is_not_ticked(ctx, field):
+    """An hrpuls form, 03.11.2026: the worker ticked a 24-month store «für zukünftig weitere
+    ausgeschriebene Stellen»; the words between broke the old pattern."""
+    label = ("Hiermit willige ich in die Speicherung meiner Daten für die Dauer von weiteren 24 Monaten, zum "
+             "Zwecke der Berücksichtigung für zukünftig weitere ausgeschriebene Stellen ein. Mir ist bewusst, dass "
+             "ich diese Einwilligung jederzeit durch eine kurze Benachrichtigung via Mail widerrufen kann.")
+    assert answer_for(field(label, type="checkbox", required=False), ctx) == Answer("skip")
+    label = ("Der internen Weiterleitung meiner Bewerbung stimme ich ausdrücklich zu, damit sie auch für "
+             "andere ausgeschriebene Stellen bzw. Unternehmensbereiche berücksichtigt werden kann.")
+    assert answer_for(field(label, type="checkbox", required=False), ctx) != Answer("check")
+    required = "Hiermit nehme ich zur Kenntnis, dass meine Daten gemäß der Datenschutzerklärung verarbeitet werden."
+    assert answer_for(field(required, type="checkbox", required=True), ctx) == Answer("check")

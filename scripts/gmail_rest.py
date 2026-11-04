@@ -25,6 +25,7 @@ import base64
 import json
 import mimetypes
 import sys
+import time
 from datetime import datetime
 from email.encoders import encode_base64
 from email.mime.base import MIMEBase
@@ -47,16 +48,26 @@ CREDS = {alias: _c.credentials_path(alias) for alias in _c.gmail_aliases}
 SEND_FROM = _accounts.get("send_from", "jobs")
 
 
+# Google's token endpoint answers a 5xx now and then (29.10.2026: one 500 raised a false
+# «OAuth oder Gmail prüfen» alert). Retried with a short pause; a 4xx (revoked token) fails at once.
+TOKEN_ATTEMPTS = 3
+TOKEN_RETRY_SECONDS = 5
+
+
 def access_token(account: str) -> str:
     keys = json.loads(OAUTH_KEYS[account].read_text())
     key = keys.get("installed") or keys.get("web")
     creds = json.loads(CREDS[account].read_text())
-    r = httpx.post("https://oauth2.googleapis.com/token", data={
-        "client_id": key["client_id"],
-        "client_secret": key["client_secret"],
-        "refresh_token": creds["refresh_token"],
-        "grant_type": "refresh_token",
-    }, timeout=30)
+    for attempt in range(1, TOKEN_ATTEMPTS + 1):
+        r = httpx.post("https://oauth2.googleapis.com/token", data={
+            "client_id": key["client_id"],
+            "client_secret": key["client_secret"],
+            "refresh_token": creds["refresh_token"],
+            "grant_type": "refresh_token",
+        }, timeout=30)
+        if r.status_code < 500 or attempt == TOKEN_ATTEMPTS:
+            break
+        time.sleep(TOKEN_RETRY_SECONDS * attempt)
     r.raise_for_status()
     return r.json()["access_token"]
 

@@ -24,8 +24,11 @@ from bot.apply.linkedin import (
     EASY_APPLY_SELECTOR,
     FOLLOW_CHECKBOX_SELECTOR,
     HELPER_ERRORS_JS,
+    LANG_JS,
     MODAL_SELECTOR,
     OFFSITE_SELECTOR,
+    STEP_MARKER_JS,
+    STUCK_ERRORS_JS,
     UPLOAD_RESUME_SELECTOR,
     easy_apply,
     page_state,
@@ -132,7 +135,7 @@ class ChooserInfo:
 class FakeModalPage:
     def __init__(self, steps, body=JOB_BODY, url=None, invalid_after_next=None, helper_after_next=None,
                  confirm=True, easy_apply_button=True, follow_toggles=True, select_upload=True, hints=None,
-                 invalid_count_after_next=None):
+                 invalid_count_after_next=None, step_hints=None):
         self.steps = copy.deepcopy(steps)
         self.step = 0
         self.body = body
@@ -157,6 +160,7 @@ class FakeModalPage:
         self.select_upload = select_upload       # False: завантажений файл не стає вибраним radio
         self.hints = hints or []                 # тексти під полями, що є на кожному кроці
         self.invalid_count_after_next = invalid_count_after_next or {}
+        self.step_hints = step_hints or {}       # step -> texts under fields shown only on that step
         self.invalid = 0
 
     # Стан модалки
@@ -201,7 +205,13 @@ class FakeModalPage:
             return {"html": "", "submit_visible": True, "challenge_visible": False,
                     "invalid_count": self.invalid, "error_texts": list(self.errors)}
         if js == HELPER_ERRORS_JS:
-            return list(self.hints) + list(self.helpers)
+            return list(self.hints) + list(self.helpers) + list(self.step_hints.get(self.step, []))
+        if js == LANG_JS:
+            return "en"
+        if js == STUCK_ERRORS_JS:
+            return list(getattr(self, "stuck_texts", []))
+        if js == STEP_MARKER_JS:
+            return self.steps[self.step]["progress"] if self.modal_open else ""
         raise AssertionError(f"unexpected evaluate: {js[:60]}")
 
     @contextmanager
@@ -376,8 +386,15 @@ def test_resolve_offsite_reads_apply_anchor_only():
 
 
 def test_resolve_offsite_without_anchor_is_none():
-    assert resolve_offsite(FakeJobPage(fixture_html("linkedin_job_easy.html")), JOB_URL) == ("open", None)
     assert resolve_offsite(FakeJobPage(fixture_html("linkedin_applied.html")), JOB_URL) == ("closed", None)
+    page = FakeJobPage(fixture_html("linkedin_job_offsite.html").replace('data-view-name="job-apply-button"', ""))
+    assert resolve_offsite(page, JOB_URL) == ("open", None)
+
+
+def test_resolve_offsite_on_an_easy_apply_page_says_so():
+    """The resolver guessed offsite from a guest page it could not read; under the login the
+    page has the Easy Apply button: the worker applies on it instead of holding no_apply_link."""
+    assert resolve_offsite(FakeJobPage(fixture_html("linkedin_job_easy.html")), JOB_URL) == ("easy_apply", None)
 
 
 def test_easy_apply_happy_path_submits_and_unfollows(steps, ctx, tmp_path):
@@ -614,3 +631,63 @@ def test_email_select_without_profile_address_is_handoff(steps, ctx, tmp_path):
     res = easy_apply(page, JOB_URL, ctx, None, "", tmp_path, dry_run=False)
     assert res.status == "handoff" and res.reason == "open_required: Email address*"
     assert not page.submitted and page.step == 0 and page.selected_email is None
+
+
+def test_counter_on_the_next_step_is_not_an_error(steps, ctx, tmp_path):
+    """29.10.2026: the questions step shows «0/20 0 of 20 characters» under a salary field; right after
+    Next from the resume step that new counter was taken for a validation error and the step never got
+    filled. The step changed, so nothing was rejected."""
+    hint = {"label": "Was ist Ihre jährliche Gehaltserwartung in EUR?", "text": "0/20 0 of 20 characters"}
+    page = FakeModalPage(steps, step_hints={1: [hint], 2: [hint]})
+    res = easy_apply(page, JOB_URL, ctx, None, "", tmp_path, dry_run=False)
+    assert res.status == "submitted"
+
+
+def test_counter_texts_are_never_errors_but_messages_are():
+    from bot.apply.linkedin import STUCK_ERRORS_JS, _validation
+
+    class Stub:
+        def __init__(self, helpers, marker):
+            self.helpers, self.marker = helpers, marker
+
+        def evaluate(self, js):
+            if js == HELPER_ERRORS_JS:
+                return self.helpers
+            if js == STEP_MARKER_JS:
+                return self.marker
+            if js == STUCK_ERRORS_JS:
+                return []
+            return {"error_texts": [], "invalid_count": 0}
+
+        def wait_for_timeout(self, ms):
+            pass
+
+    counter = {"label": "Salary", "text": "0/20 0 of 20 characters"}
+    error = {"label": "Salary", "text": "Enter a whole number between 0 and 99999999"}
+    # same step and nothing explains it: LinkedIn refused the step, another click would loop
+    assert _validation(Stub([counter], "3/4 pages|a"), [], [], 0, "3/4 pages|a") == ["step did not advance"]
+    assert _validation(Stub([counter, error], "3/4 pages|a"), [], [], 0, "3/4 pages|a") == [
+        "Salary: Enter a whole number between 0 and 99999999"]
+    assert _validation(Stub([counter, error], "4/4 pages|b"), [], [], 0, "3/4 pages|a") == []
+
+
+def test_date_in_the_modal_uses_the_ui_locale(steps, ctx, tmp_path):
+    for d in steps[2]["fields"]:
+        d["i"] += 1
+    steps[2]["fields"].insert(0, {"i": 0, "tag": "input", "type": "text", "name": "", "id": "start", "required": True,
+                                  "label": "Wann wäre Ihr frühestmögliches Startdatum? *", "placeholder": "",
+                                  "visible": True, "value": "", "options": None, "group": ""})
+    page = FakeModalPage(steps)
+    res = easy_apply(page, JOB_URL, ctx, None, "", tmp_path, dry_run=False)
+    assert res.status == "submitted"
+    assert re.fullmatch(r"\d{2}/\d{2}/\d{4}", page.filled["Wann wäre Ihr frühestmögliches Startdatum? *"])
+
+
+def test_step_that_does_not_advance_is_a_handoff_not_a_loop(steps, ctx, tmp_path):
+    """29.10.2026: a required consent radio left empty kept the questions step; its message sits outside
+    the field helpers, so the driver clicked Review eight times and ended with too_many_steps."""
+    page = FakeModalPage(steps, helper_after_next={2: [{"label": "x", "text": "0/20 0 of 20 characters"}]})
+    page.stuck_texts = ["This field is required"]
+    res = easy_apply(page, JOB_URL, ctx, None, "", tmp_path, dry_run=False)
+    assert res.status == "handoff" and res.reason == "validation: This field is required"
+    assert page.step == 2 and not page.submitted

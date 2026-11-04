@@ -1,0 +1,43 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Contract Co application</title></head>
+<body>
+<!-- Synthetic web-component form, shaped like SmartRecruiters oneclick-ui and SAP UI5:
+     inputs live in open shadow roots, labels in the same root, on the host, or via aria-labelledby. -->
+<h1>Senior Android Engineer</h1>
+<input type="file" id="photo" style="display:none">
+<form-field label="First name" required></form-field>
+<form-field label="Last name" required></form-field>
+<labelled-input text="Email" kind="email"></labelled-input>
+<aria-input text="Phone number" kind="tel"></aria-input>
+<upload-box label="Resume" required></upload-box>
+<script>
+customElements.define("form-field", class extends HTMLElement {
+  connectedCallback() {
+    const r = this.attachShadow({mode: "open"});
+    r.innerHTML = '<div><input type="text" style="width:300px"></div>';
+    if (this.hasAttribute("required")) r.querySelector("input").setAttribute("aria-required", "true");
+  }
+});
+customElements.define("labelled-input", class extends HTMLElement {
+  connectedCallback() {
+    const r = this.attachShadow({mode: "open"});
+    r.innerHTML = '<label for="x">' + this.getAttribute("text") + '</label><input id="x" type="'
+      + this.getAttribute("kind") + '" required style="width:300px">';
+  }
+});
+customElements.define("aria-input", class extends HTMLElement {
+  connectedCallback() {
+    const r = this.attachShadow({mode: "open"});
+    r.innerHTML = '<span id="lbl">' + this.getAttribute("text") + '</span><input aria-labelledby="lbl" type="'
+      + this.getAttribute("kind") + '" style="width:300px">';
+  }
+});
+customElements.define("upload-box", class extends HTMLElement {
+  connectedCallback() {
+    const r = this.attachShadow({mode: "open"});
+    r.innerHTML = '<div style="width:400px;height:60px;border:1px dashed">Choose a file<input type="file" style="display:none"></div>';
+  }
+});
+</script>
+<button type="submit">Next</button>
+</body></html>

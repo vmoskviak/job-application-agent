@@ -174,7 +174,9 @@ def test_classify_channel():
     assert classify_channel({"email": "hr@foo.de", "source_url": "https://www.stepstone.de/x"}) == "email"
     assert classify_channel({"email": None, "source_url": "https://www.stepstone.de/stelle/x"}) == "stepstone_auto"
     assert classify_channel({"email": None, "source_url": "https://www.xing.com/jobs/x"}) == "xing_auto"
-    assert classify_channel({"email": None, "source_url": "https://www.linkedin.com/jobs/view/1"}) == "manual_link"
+    # LinkedIn goes to the worker queue (Easy Apply or the employer's form behind it), not to the manual list
+    assert classify_channel({"email": None, "source_url": "https://www.linkedin.com/jobs/view/1"}) == "linkedin"
+    assert classify_channel({"email": None, "source_url": "https://de.linkedin.com/jobs/view/x-2"}) == "linkedin"
     assert classify_channel({"email": None, "source_url": "https://karriere.foo.de/job/1"}) == "manual_link"
     # öД: Interamt має власний apply-модуль (28.07)
     assert classify_channel({"email": None, "source_url": "https://interamt.de/koop/app/stelle?id=1234567"}) == "interamt_auto"
@@ -479,6 +481,13 @@ def test_soft_hyphens_do_not_hide_exclusions():
     assert "\u00ad" not in job.title and "\u00ad" not in job.description
 
 
+def test_combining_grapheme_joiner_is_invisible():
+    """Upwork alert mails pad their preheader with U+034F between soft hyphens."""
+    from bot.textclean import strip_invisible
+
+    assert strip_invisible("\u034f \u00ad\u034f Find\u200b Work") == "  Find Work"
+
+
 def test_dedup_matches_source_url_when_company_unknown(tmp_path):
     # 15.10.2026: вакансії агенції й канцелярії прийшли з company="Unbekannt",
     # порівняння назв не спрацювало, і ті самі вакансії відібрались удруге.
@@ -574,3 +583,29 @@ def test_apply_rules_unrecoverable_and_expired_entries(tmp_path):
     assert not result["selected"]
     assert [(e["title"], e["reason"]) for e in result["excluded"]] == [
         ("Suchen", "scrape_failed_title"), ("Bürokraft (m/w/d)", "closed")]
+
+
+def test_dedup_catches_company_hidden_in_the_title(tmp_path):
+    """03.11.2026: three repeat applications, each with the company only in the page title."""
+    from bot.filters.rules import repair_scraped_entry
+    tracker = tmp_path / "tracker.md"
+    tracker.write_text(
+        "| 2026-10-23 | Teamassistenz bei der Muster Certification GmbH (m/w/d) | Muster Certification GmbH "
+        "(Muster Gruppe), Düsseldorf | rejected 2026-10-23 |\n"
+        "| 2026-10-12 | Bürokauffrau (m/w/d) | Muster Legal Rechtsanwälte, Köln | sent 2026-10-12 |\n"
+        "| 2026-10-29 | Empfangskraft (m/w/d) Teilzeit / Köln | MUSTERSERVICE Sicherheit & Service Nordwest, Köln "
+        "| skipped 2026-10-29 |\n",
+        encoding="utf-8",
+    )
+    desc = "Zum Hauptinhalt springen\nIhre Aufgaben\n"
+    entries = [
+        {"company": "Teamassistenz bei der Muster Certification GmbH (m/w/d)",
+         "title": "Teamassistenz bei der Muster Certification GmbH (m/w/d)", "description": desc},
+        {"company": "Unbekannt", "title": "➤ Stellenangebot Bürokauffrau (m/w/d) - Karriere bei Muster Legal",
+         "description": desc},
+        {"company": "Unbekannt", "title": "Empfangskraft (m/w/d) Teilzeit | Köln | MUSTERSERVICE", "description": desc},
+    ]
+    repaired = [repair_scraped_entry(e) for e in entries]
+    assert [r["company"] for r in repaired] == ["Muster Certification GmbH", "Muster Legal", "MUSTERSERVICE"]
+    fresh, dupes = dedup_against_tracker(repaired, tracker)
+    assert len(dupes) == 3 and not fresh

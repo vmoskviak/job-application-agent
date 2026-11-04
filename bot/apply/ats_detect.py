@@ -94,7 +94,8 @@ PROBE_JS = r"""
     return SUBMIT_TEXTS.some((s) => (s.includes(' ') ? t.includes(s) : t === s));
   });
 
-  const challengeSrc = /recaptcha\/.*bframe|hcaptcha\.com\/.*challenge|challenges\.cloudflare\.com/i;
+  // captcha-delivery.com: DataDome slider (SmartRecruiters) over the whole page.
+  const challengeSrc = /recaptcha\/.*bframe|hcaptcha\.com\/.*challenge|challenges\.cloudflare\.com|captcha-delivery\.com/i;
   const iframeChallenge = all('iframe').some((f) => challengeSrc.test(f.src || '') && onScreen(f));
   const textChallenge = /select all images|verify you are human/i;
   const elChallenge = all('[aria-label], h1, h2, h3, p, div, span, label').some((el) => {

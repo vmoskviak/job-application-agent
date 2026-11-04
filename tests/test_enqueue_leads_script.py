@@ -41,7 +41,9 @@ def _jordan(tmp_path, with_cv=True, platforms=None):
     import dataclasses
     c = dataclasses.replace(_client.load("jordan", base=EX), root=tmp_path / "jordan")   # трекер і var у tmp
     if platforms is not None:
-        c = dataclasses.replace(c, targeting={**c.targeting, "platforms": platforms})
+        # a platform switched on needs a daily limit, otherwise presend holds it (platform_limit_zero)
+        limits = {**(c.targeting.get("daily_limits") or {}), **{p: 5 for p in platforms}}
+        c = dataclasses.replace(c, targeting={**c.targeting, "platforms": platforms, "daily_limits": limits})
     (c.root / "var" / "run").mkdir(parents=True)
     c.tracker.write_text((EX / "jordan" / "tracker.md").read_text(encoding="utf-8"), encoding="utf-8")
     att = tmp_path / "attachments"

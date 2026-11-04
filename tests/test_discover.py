@@ -437,3 +437,48 @@ def test_main_without_state_keeps_old_behaviour(monkeypatch, tmp_path):
     discover.main(urls, use_playwright=False)
     discover.main(urls, use_playwright=False)
     assert not list(tmp_path.glob("**/discover_seen.json"))
+
+
+# --- LinkedIn posting links: one spelling per posting (alert /comm/ links, search slugs) ---
+
+def test_linkedin_job_url_canonical_form():
+    from bot.generators.discover import linkedin_job_url
+    canon = "https://www.linkedin.com/jobs/view/4312345678"
+    assert linkedin_job_url(
+        "https://www.linkedin.com/comm/jobs/view/4312345678/?trackingId=abc%3D%3D&refId=x&lipi=y") == canon
+    assert linkedin_job_url(
+        "https://de.linkedin.com/jobs/view/teamassistenz-m-w-d-at-beispielwerk-gmbh-4312345678?position=1") == canon
+    assert linkedin_job_url("https://www.linkedin.com/jobs/view/4312345678/") == canon
+    assert linkedin_job_url("https://linkedin.com/jobs/view/4312345678") == canon
+    assert linkedin_job_url("https://www.linkedin.com/jobs/search/?currentJobId=4312345678&keywords=x") == canon
+
+
+def test_linkedin_job_url_leaves_other_links_alone():
+    from bot.generators.discover import linkedin_job_url
+    assert linkedin_job_url("https://www.linkedin.com/comm/jobs/search?keywords=assistenz") is None
+    assert linkedin_job_url("https://www.linkedin.com/company/beispielwerk/") is None
+    assert linkedin_job_url("https://www.stepstone.de/stelle/jobs/view/123") is None
+    assert linkedin_job_url("https://notlinkedin.com/jobs/view/123") is None
+
+
+def test_main_canonicalises_linkedin_links_before_seen_state_and_intake(monkeypatch, tmp_path):
+    """An alert /comm/ link and the search's slug link of the same posting: one intake with the
+    canonical URL (the guest page path in bot.scrapers.fetch), one seen key."""
+    import bot.generators.discover as discover
+    import bot.scrapers.browser as browser
+    monkeypatch.setattr(browser, "shutdown_browser", lambda: None)
+    calls: list[str] = []
+
+    def fake_intake(url, use_playwright=True):
+        calls.append(url)
+        return _live_result(url)
+
+    monkeypatch.setattr(discover, "intake_with_meta", fake_intake)
+    urls = tmp_path / "urls.txt"
+    urls.write_text("https://www.linkedin.com/comm/jobs/view/4312345678/?trackingId=abc&refId=x\n"
+                    "https://de.linkedin.com/jobs/view/teamassistenz-m-w-d-at-beispielwerk-4312345678\n",
+                    encoding="utf-8")
+    state = tmp_path / "state" / "discover_seen.json"
+    discover.main(urls, use_playwright=False, seen_state=state)
+    assert calls == ["https://www.linkedin.com/jobs/view/4312345678"]
+    assert discover.load_seen(state) == {"www.linkedin.com/jobs/view/4312345678"}

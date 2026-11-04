@@ -91,8 +91,13 @@ def test_get_context_headed_launch_and_reuse(monkeypatch, tmp_path):
     monkeypatch.setattr(browser, "_playwright", None)
     ctx = browser.get_context(headed=True)
     assert launches[0]["headless"] is False
-    assert launches[0]["args"] == ["--disable-blink-features=AutomationControlled"]
+    assert launches[0]["args"] == ["--disable-blink-features=AutomationControlled",
+                                   "--window-position=0,0", "--window-size=1280,900"]
+    # 02.11.2026: viewport 1280x900 plus the browser chrome made a 1288x1031 window on a 1280x900
+    # display, so the bottom of every form sat below the screen, for the worker and in VNC
+    assert launches[0]["no_viewport"] is True and "viewport" not in launches[0]
     assert browser.get_context() is ctx and len(launches) == 1
     monkeypatch.setattr(browser, "_context", None)
     browser.get_context()
     assert launches[1]["headless"] is True and "args" not in launches[1]
+    assert launches[1]["viewport"] == {"width": 1280, "height": 900}

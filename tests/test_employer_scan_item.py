@@ -29,3 +29,19 @@ def test_item_body_is_capped(monkeypatch):
                "body": {"data": base64.urlsafe_b64encode(b"x" * 5000).decode()}}
     monkeypatch.setattr(es, "_get", lambda account, path, **p: {"payload": payload, "threadId": "t1"})
     assert len(es._item("jobs", "m1", [])["body"]) == 3000
+
+
+def test_item_carries_trash_flag_and_reply_to(monkeypatch):
+    """The watcher reads in:anywhere: a mail the owner binned must stay recognisable (29.10.2026),
+    and Reply-To decides whether a reply can reach anyone."""
+    import employer_scan as es
+
+    payload = {"headers": [{"name": "From", "value": "Board <messages-noreply@board.example>"},
+                           {"name": "Reply-To", "value": "thread-77@reply.board.example"}],
+               "mimeType": "text/plain", "body": {"data": base64.urlsafe_b64encode(b"Hello").decode()}}
+    monkeypatch.setattr(es, "_get", lambda account, path, **p: {"payload": payload, "threadId": "t1",
+                                                                "labelIds": ["TRASH", "CATEGORY_UPDATES"]})
+    item = es._item("jobs", "m1", [])
+    assert item["trashed"] is True and item["reply_to"] == "thread-77@reply.board.example"
+    monkeypatch.setattr(es, "_get", lambda account, path, **p: {"payload": payload, "threadId": "t1"})
+    assert es._item("jobs", "m1", [])["trashed"] is False

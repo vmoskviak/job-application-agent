@@ -10,6 +10,7 @@ import time
 from pathlib import Path
 
 from bot.apply import detect, forms
+from bot.apply.job_boards import employer_apply_url, employer_url_ok
 from bot.apply.models import ApplyResult
 from bot.generators.cv_engine import CV_FILE_STEM, portal_zeugnisse
 
@@ -72,6 +73,14 @@ def external_handoff_url(page) -> str | None:
     return ""
 
 
+def page_employer_url(page) -> str:
+    """The employer's apply URL in the page's HTML (escaped JSON included), "" when there is none."""
+    try:
+        return employer_apply_url(page.content()) or ""
+    except Exception:  # noqa: BLE001 — the page is gone; the enqueue step fetches the posting itself
+        return ""
+
+
 _APPLIED_MARKERS = ("schon beworben", "bereits beworben")
 
 
@@ -112,9 +121,13 @@ def apply(page, url: str, app_dir: Path, attachments: list[Path], dry_run: bool,
         return ApplyResult(
             "form_unsupported", "stepstone", url, [shot],
             reason=f"pre-flight classified as {kind}",
+            employer_url=page_employer_url(page) if kind == "external_ats" else "",
         )
 
     forms.accept_cookies(page)
+    # Read the employer's apply URL while the posting is still on screen: after the click an
+    # external posting turns into the «Hat es geklappt?» interstitial, which no longer carries it.
+    posting_employer_url = page_employer_url(page)
 
     clicked = False
     for sel in _APPLY_BUTTON_SELECTORS:
@@ -152,6 +165,7 @@ def apply(page, url: str, app_dir: Path, attachments: list[Path], dry_run: bool,
         return ApplyResult(
             "form_unsupported", "stepstone", url, [shot],
             reason="external application — redirects to company website",
+            employer_url=posting_employer_url or page_employer_url(page),
         )
 
     filled = forms.fill_known_fields(page)
@@ -239,15 +253,16 @@ def apply(page, url: str, app_dir: Path, attachments: list[Path], dry_run: bool,
             break
         page.wait_for_timeout(2000)
 
-    # Передача на сайт роботодавця: «Du musst diese Bewerbung auf der
-    # Unternehmensseite weiterführen» + кнопка «Bewerbung fortführen». Заявка
-    # НЕ подана; повертаємо лінк, куди StepStone веде, щоб оператор подав там.
+    # Hand-off to the employer site: «Du musst diese Bewerbung auf der Unternehmensseite
+    # weiterführen» plus a «Bewerbung fortführen» button. Nothing is submitted; the link StepStone
+    # leads to goes into the result, and the enqueue step gives it to the form worker.
     handoff = external_handoff_url(page)
     if handoff is not None:
         shot_conf = forms.screenshot(page, app_dir, "apply_external_handoff.png")
         return ApplyResult(
             "form_unsupported", "stepstone", url, [shot_form, shot_conf],
-            reason=f"StepStone передає на сайт роботодавця, не подано: {handoff or 'лінк не визначено'}",
+            reason=f"external hand-off to the employer site, not submitted: {handoff or 'link not found'}",
+            employer_url=handoff if handoff and employer_url_ok(handoff) else "",
         )
 
     confirmation = forms.find_confirmation(page)

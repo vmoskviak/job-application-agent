@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import re
+from email.utils import parseaddr
 from pathlib import Path
 from typing import Literal
 
@@ -30,21 +31,27 @@ _REPLY_CLASSES = ("confirmed", "rejected", "interview", "info_request")
 PLATFORM_SENDERS: dict[str, tuple[str, ...]] = {
     "ats": ("greenhouse-mail.io", "ashbyhq.com", "candidates.workablemail.com",
             "hire.lever.co", "teamtailor.com", "personio.de", "factorialhr.com"),
-    "marketplace": ("upwork.com", "malt.com", "a.team", "arc.dev"),
+    # freelance.de: alerts, invoices and client messages share noreply@ (29.10.2026); as a marketplace only
+    # «Neue Nachricht» and invitations become cards, the rest is system mail
+    "marketplace": ("upwork.com", "malt.com", "a.team", "arc.dev", "freelance.de"),
     "agency": ("freelancermap.de", "gulp.de", "randstad.de", "etengo.de", "hays.de",
                "solcom.de", "westhouse.de", "computerfutures.com"),
     "social": ("linkedin.com", "xing.com"),
 }
 # InMail рекрутерів: LinkedIn шле їх з окремих адрес, не з jobalerts
-INMAIL_SENDERS = ("inmail-hit-reply@linkedin.com", "messages-noreply@linkedin.com")
+# hit-reply@: a recruiter's reply in a LinkedIn conversation (29.10.2026), not only InMail.
+INMAIL_SENDERS = ("inmail-hit-reply@linkedin.com", "messages-noreply@linkedin.com", "hit-reply@linkedin.com")
 
 # Тексти вже прогнані через responses._fold (нижній регістр, ae/oe/ue)
 SYSTEM_RE = re.compile(
     r"newsletter|tipps|tips|statistik|статистик|rabatt|discount|willkommen|welcome to"
     r"|weekly|digest|your week|credits"
     # алерти збережених пошуків (GULP, freelancermap, LinkedIn): 26.10 два GULP-алерти стали картками
-    r"|stored search|new results|projektvorschl|neue projekte|neue auftr|job alert|new jobs"
+    r"|stored search|new results|projektvorschl|neue projekte|neue auftr|job alert|new jobs|suchagent"
     r"|jobs for you|empfehlungen"
+    # GDPR Art. 13/14 notices from agencies (29.10.2026: one became an outreach card with a draft)
+    r"|datenschutz|data protection|privacy (?:notice|policy|settings)|dsgvo|gdpr"
+    r"|database entry|datenbankeintrag|marketing settings|marketing-einstellungen"
     # автовідповіді скриньок: нічого не кажуть про заявку
     r"|automatic reply|automatische antwort|abwesenheit|out of office|autoreply|auto-reply")
 OUTREACH_RE = re.compile(
@@ -52,6 +59,11 @@ OUTREACH_RE = re.compile(
     r"|projektanfrage|projektangebot|freelance project|contract role")
 INVITE_RE = re.compile(r"invit|mission|proposal|new message|neue nachricht")
 _USD_RE = re.compile(r"\$|\busd\b", re.IGNORECASE)
+# Local parts that cannot receive a reply: noreply@, no-reply-42@, noreply_application@,
+# jobs-noreply@, donotreply@, mailer-daemon@, bounces+id@ (29.10.2026: two replies went to such addresses)
+_NO_REPLY_RE = re.compile(
+    r"(?:^|[-_.+])(?:no[-_.]?reply|do[-_.]?not[-_.]?reply)(?:$|[-_.+])"
+    r"|^(?:mailer[-_.]?daemon|postmaster|bounces?)(?:$|[-_.+])", re.IGNORECASE)
 
 
 def platform_domains() -> list[str]:
@@ -66,6 +78,14 @@ def sender_domain(from_header: str) -> str:
 
 def _sender_host(from_header: str) -> str:
     return (extract_domain(from_header) or "").lower()
+
+
+def is_no_reply(address: str) -> bool:
+    """The address cannot receive a reply (a From or Reply-To header value works too).
+    The watcher checks the address a reply would go to: Reply-To first, then From."""
+    addr = parseaddr(address or "")[1]
+    local = addr.rsplit("@", 1)[0] if "@" in addr else ""
+    return bool(local) and bool(_NO_REPLY_RE.search(local))
 
 
 def is_agency(from_header: str, agencies_de: list[str]) -> bool:
@@ -134,15 +154,28 @@ def status_for_class(cls: str) -> str | None:
     return {"confirmed": "confirmed", "rejected": "rejected", "interview": "interview"}.get(cls)
 
 
+# Alert senders that also send the status of an application: their alerts stay excluded, these
+# subjects are read anyway. LinkedIn jobs-noreply@ sends job recommendations and «Your application to
+# <job> at <company>», the rejection (04.11.2026); «your application was sent to» is only a receipt.
+STATUS_SUBJECTS: dict[str, tuple[str, ...]] = {
+    "jobs-noreply@linkedin.com": ('"your application to"',),
+}
+
+
 def platform_queries(days: int, exclude_senders: list[str], chunk: int = 20) -> list[str]:
-    """Gmail-запити по доменах платформ, партіями по chunk, без алерт-відправників."""
+    """Gmail queries over platform domains, in chunks, without the alert senders, plus the status
+    subjects of an excluded sender (STATUS_SUBJECTS). in:anywhere: the mailbox owner trashes mail by
+    hand, sometimes before the watcher has seen it; reading from the Trash changes nothing in the mailbox."""
     negatives = " ".join(f"-from:{s}" for s in exclude_senders if s)
     domains = platform_domains()
     queries: list[str] = []
     for i in range(0, len(domains), chunk):
         senders = " OR ".join(f"from:{d}" for d in domains[i:i + chunk])
-        q = f"newer_than:{days}d in:inbox ({senders})"
+        q = f"newer_than:{days}d in:anywhere ({senders})"
         queries.append(f"{q} {negatives}".strip())
+    for sender, subjects in STATUS_SUBJECTS.items():
+        if sender in exclude_senders:
+            queries.append(f"newer_than:{days}d in:anywhere from:{sender} subject:({' OR '.join(subjects)})")
     return queries
 
 
@@ -301,13 +334,21 @@ def parse_draft(text: str) -> dict:
     return {"class": data["class"], "draft": str(data["draft"]).strip()}
 
 
+def _greeting_company(company: str | None) -> str:
+    """The firm for «Hello X team»: a tracker cell may carry notes («X (via Agency, Person)»)."""
+    name = (company or "").split("(", 1)[0]
+    name = re.split(r"\s+via\s+", name, maxsplit=1, flags=re.IGNORECASE)[0]
+    return " ".join(name.split()).strip(" ,;")
+
+
 def assemble_draft(draft: str, lang: str, profile: dict, rate_line: str, company: str | None) -> str:
     """Лист із тіла чернетки: привітання, тіло без тире, ставка, підпис (як cover_note.build_note)."""
     name = f"{profile.get('first_name', '')} {profile.get('last_name', '')}".strip()
     if lang == "de":
         greeting, closing = "Guten Tag,", "Mit freundlichen Grüßen"
     else:
-        greeting = f"Hello {company.strip()} team," if company and company.strip() else "Hello,"
+        firm = _greeting_company(company)
+        greeting = f"Hello {firm} team," if firm else "Hello,"
         closing = "Best regards"
     sign = [name, profile.get("city") or ""]
     extra = profile.get("cv_contact_extra") or []

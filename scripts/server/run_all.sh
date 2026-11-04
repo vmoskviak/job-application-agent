@@ -11,7 +11,9 @@ ENGINE="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 export JOBSEARCH_CLIENTS_DIR="${JOBSEARCH_CLIENTS_DIR:-$ENGINE/../jobsearch-clients/clients}"
 
 # fresh list of clients and statuses
-git -C "$JOBSEARCH_CLIENTS_DIR" pull --rebase >/dev/null 2>&1 || true
+# a merge, like run_agent.sh: package files the worker left uncommitted must not block it
+git -C "$JOBSEARCH_CLIENTS_DIR" pull --no-rebase --no-edit >/dev/null 2>&1 \
+  || git -C "$JOBSEARCH_CLIENTS_DIR" merge --abort >/dev/null 2>&1 || true
 
 RC=0
 for SLUG in $(PYTHONPATH="$ENGINE" "$ENGINE/.venv/bin/python" -m bot.clients list --status active --slugs); do
