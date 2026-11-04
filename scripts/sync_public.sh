@@ -9,7 +9,9 @@
 #   2. the same script with --companies against .companies-baseline, the accepted generic hits
 #      (first words of tracker companies such as «Stadt» or «Reply»): a term absent from the
 #      baseline is either an employer name that leaked into a docstring or a new generic word to
-#      accept by adding one line there. The pre-push hook of the public clone runs both as well.
+#      accept by adding one line there. The pre-push hook of the public clone runs both as well:
+#      scripts/hooks/public_pre_push.sh, versioned here; the clone's .git/hooks/pre-push is a stub
+#      (scripts/hooks/public_pre_push_stub.sh) that this script installs when the clone has none.
 # Then by hand: git status, git diff, commit, push.
 #
 # Left out of the public copy and why:
@@ -17,7 +19,7 @@
 #   .claude/                                            local session settings; the public clone has its own settings.json
 #   .superpowers/ docs/superpowers/                     working plans and specs with the history of real clients
 #   the files listed in .public-exclude                 employer-specific portal modules, their test, the companies
-#                                                       baseline; the list itself stays private
+#                                                       baseline, the hook and its stub; the list itself stays private
 # Protected in the target (never touched): LICENSE, docs/index.md, docs/privacy.md.
 set -euo pipefail
 
@@ -65,6 +67,14 @@ if [[ ${#DRY[@]} -eq 0 ]]; then
     echo "== check_no_private_data --strict in the public copy (client terms from $JOBSEARCH_CLIENTS_DIR): clean"
     (cd "$TARGET" && "$PY" scripts/check_no_private_data.py --companies --baseline "$ENGINE/.companies-baseline")
     echo "== companies against $ENGINE/.companies-baseline: no new terms"
+    # A fresh clone has no hook: install the stub. A hook written by hand is left alone, with a note.
+    HOOK="$TARGET/.git/hooks/pre-push"
+    if [[ ! -e "$HOOK" ]]; then
+        cp "$ENGINE/scripts/hooks/public_pre_push_stub.sh" "$HOOK" && chmod +x "$HOOK"
+        echo "== installed $HOOK (stub for scripts/hooks/public_pre_push.sh)"
+    elif ! grep -q "public_pre_push.sh" "$HOOK"; then
+        echo "== note: $HOOK is not the stub for scripts/hooks/public_pre_push.sh, the versioned hook is not in use" >&2
+    fi
     echo
     git -C "$TARGET" status --short | head -40
 fi
