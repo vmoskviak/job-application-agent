@@ -35,10 +35,15 @@ from bot.generators.cv_engine import CV_FILE_STEM
 
 _PORTAL_MODULES = {"stepstone": stepstone, "xing": xing,
                    "oracle_cx": oracle_cx, "interamt": interamt}
-# Модулі під сайти окремих роботодавців: у публічній копії рушія їх нема, тому
-# підключаються лише коли файл присутній. Кожен оголошує HOSTS для portal_from_url.
+# Portal modules for the career sites of specific employers exist only in the private engine:
+# bot/apply/employer_portals.py names them, and each one declares HOSTS for portal_from_url.
+# The public copy has neither the list nor the modules, so both imports may fail.
 _EMPLOYER_HOSTS: dict[str, tuple[str, ...]] = {}
-for _name in ("check24", "eismann"):
+try:
+    from bot.apply.employer_portals import MODULES as _EMPLOYER_MODULES
+except ImportError:
+    _EMPLOYER_MODULES = ()
+for _name in _EMPLOYER_MODULES:
     try:
         _module = importlib.import_module(f"bot.apply.{_name}")
     except ImportError:

@@ -1,25 +1,32 @@
 #!/usr/bin/env python3
-"""Перевірка перед комітом: чи не затекли в рушій дані реальних клієнтів.
+"""Pre-commit check: did data of real clients leak into the engine?
 
-    check_no_private_data.py [--companies] [--strict]
+    check_no_private_data.py [--companies] [--strict] [--baseline FILE]
 
-Збирає з усіх папок у JOBSEARCH_CLIENTS_DIR імена, адреси, телефони,
-роботодавців із CV, а також ID вакансій з трекерів і папок заявок (StepStone,
-XING, LinkedIn, Interamt, Indeed) і шукає їх у файлах цього репозиторію (ті,
-що бачить git: tracked + untracked, без ignored). `--companies` додає назви
-компаній із трекерів: там багато загальновідомих фірм, тому це окремий,
-шумніший режим.
+Collects from every folder in JOBSEARCH_CLIENTS_DIR the names, addresses, phone numbers and
+employers from the CVs, plus the job ids from the trackers and application folders (StepStone,
+XING, LinkedIn, Interamt, Indeed), and looks for them in the files of this repository (what git
+sees: tracked and untracked, not ignored). `--companies` adds the company names from the trackers;
+many of those are well-known firms or generic first words («Stadt», «Reply»), so it is a separate,
+noisier mode.
 
-Незалежно від клієнтів є структурна перевірка: email-адреси не на
-плейсхолдерному домені й не на домені платформи, а також німецькі телефони,
-що не схожі на заглушку. Вона ловить чужі контакти в тестах і фікстурах, коли
-даних клієнтів поруч нема (CI публічної копії).
+Independent of the clients there is a structural check: email addresses that are neither on a
+placeholder domain nor on a platform domain, and German phone numbers that do not look like a
+stub. It catches foreign contacts in tests and fixtures when no client data is around (the CI of
+the public copy).
 
-`--strict` для CI: без папки клієнтів не зупиняється з кодом 2, а робить лише
-структурну перевірку. LICENSE не перевіряється ніколи: там ім'я автора за
-задумом.
+`--strict` for CI: without a clients folder it does not stop with code 2 but runs the structural
+check only. LICENSE is never checked: the author's name is there by design.
 
-Код виходу 1, якщо щось знайдено; 2, якщо клієнтів нема і не `--strict`.
+`--baseline FILE` (implies `--companies`): a ratchet for the company mode. The file lists the
+accepted generic hits, one term per line (`#` comments and blank lines ignored, case does not
+matter); a company term in it is not reported, every other term still is, and a name, contact or
+job id is never accepted even if it stands in the file. A new term is either an employer that
+leaked into a docstring or a new generic word to add to the file by hand. scripts/sync_public.sh
+and the pre-push hook of the public clone run it against .companies-baseline, which never leaves
+the private engine (.public-exclude).
+
+Exit code 1 if something was found; 2 if there are no clients and not `--strict`.
 """
 from __future__ import annotations
 
@@ -31,7 +38,7 @@ from pathlib import Path
 ENGINE = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ENGINE))
 
-from bot import client as _client  # noqa: E402
+from bot import client as _client
 
 GENERIC = {"gmbh", "ag", "se", "kg", "co", "und", "the", "group", "deutschland",
            "germany", "digital", "service", "services", "consulting", "management"}
@@ -39,7 +46,7 @@ GENERIC = {"gmbh", "ag", "se", "kg", "co", "und", "the", "group", "deutschland",
 EXAMPLE_SLUGS = {"erika", "jordan"}
 # Файли, де чужі контакти стоять за задумом: ім'я автора в ліцензії, негативні
 # приклади в тесті цього скрипта
-SKIP_FILES = {"LICENSE", "test_check_no_private_data.py"}
+SKIP_FILES = {"LICENSE", "test_check_no_private_data.py", ".companies-baseline"}
 
 
 def repo_files() -> list[Path]:
@@ -72,7 +79,7 @@ def personal_terms(c: _client.Client) -> set[str]:
 
 
 def tracker_companies(c: _client.Client) -> set[str]:
-    from bot.filters.rules import parse_tracker_applications  # noqa: PLC0415
+    from bot.filters.rules import parse_tracker_applications
     names = set()
     for app in parse_tracker_applications(c.tracker):
         name = re.sub(r"\[([^\]]+)\]\([^)]*\)", r"\1", app["company"]).strip()
@@ -200,9 +207,42 @@ def scan(terms: set[str], files: list[Path]) -> dict[str, list[str]]:
     return hits
 
 
+def read_baseline(path: Path) -> set[str]:
+    """Accepted company terms, casefolded: one per line, `#` comments and blank lines ignored.
+    A missing file accepts nothing, so the first run lists every term as new."""
+    if not path.exists():
+        return set()
+    lines = (ln.strip() for ln in path.read_text(encoding="utf-8").splitlines())
+    return {ln.casefold() for ln in lines if ln and not ln.startswith("#")}
+
+
+def split_baselined(hits: dict[str, list[str]], company_terms: set[str], other_terms: set[str],
+                    accepted: set[str]) -> tuple[dict[str, list[str]], list[str]]:
+    """Drop the hits of accepted company terms. A term that is also a name, contact or job id
+    (other_terms) stays reported whatever the baseline says."""
+    kept: dict[str, list[str]] = {}
+    skipped: list[str] = []
+    for term, where in hits.items():
+        if term in company_terms and term not in other_terms and term.casefold() in accepted:
+            skipped.append(term)
+        else:
+            kept[term] = where
+    return kept, sorted(skipped)
+
+
+def baseline_arg(argv: list[str]) -> Path | None:
+    if "--baseline" not in argv:
+        return None
+    i = argv.index("--baseline")
+    if i + 1 >= len(argv) or argv[i + 1].startswith("--"):
+        raise SystemExit("--baseline needs a file path")
+    return Path(argv[i + 1]).expanduser()
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = sys.argv[1:] if argv is None else argv
-    with_companies = "--companies" in argv
+    baseline = baseline_arg(argv)
+    with_companies = "--companies" in argv or baseline is not None
     strict = "--strict" in argv
     clients = [c for c in _client.list_clients() if c.slug not in EXAMPLE_SLUGS]
     if not clients and not strict:
@@ -210,23 +250,32 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     files = [f for f in repo_files() if f.name not in SKIP_FILES]
     terms: set[str] = set()
+    company_terms: set[str] = set()
     for c in clients:
         terms |= personal_terms(c)
         terms |= job_ids(c)
         if with_companies:
-            # rules.py читає конфіг активного клієнта; для парсингу трекера
-            # досить будь-якого
+            # rules.py reads the active client's config; any client will do for parsing a tracker
             import os
             os.environ.setdefault(_client.ENV_CLIENT, c.slug)
-            terms |= tracker_companies(c)
+            company_terms |= tracker_companies(c)
+    other_terms = set(terms)
+    terms |= company_terms
     hits = scan(terms, files) if terms else {}
     hits.update(structural_hits(files))
+    skipped: list[str] = []
+    if baseline is not None:
+        hits, skipped = split_baselined(hits, company_terms, other_terms, read_baseline(baseline))
     for term in sorted(hits):
         print(f"{term}:")
         for where in hits[term]:
             print(f"    {where}")
     if not clients:
         print("клієнтів нема: лише структурна перевірка (email, телефони)")
+    if baseline is not None:
+        new = sorted(t for t in hits if t in company_terms)
+        print(f"companies: {len(skipped)} term(s) accepted by {baseline}; "
+              f"new: {', '.join(new) if new else 'none'}")
     print(f"перевірено {len(files)} файлів на {len(terms)} термінів "
           f"({len(clients)} клієнт(ів)): знайдено {len(hits)}")
     return 1 if hits else 0

@@ -294,6 +294,27 @@ def test_text_plain_keeps_the_whole_part_with_its_line_breaks():
     assert iw.text_plain(html_only) == "" and iw.text_plain(attachment) == ""
 
 
+def test_collect_reads_platform_mail_from_every_mailbox(monkeypatch, tmp_path):
+    """04.11.2026: a client's LinkedIn account is registered with the jobs address while employers
+    reply to main; the platform queries ran on main only, so her LinkedIn and ATS mail on jobs was
+    invisible to the hourly watcher (the morning agent found it a day later)."""
+    from types import SimpleNamespace
+
+    import employer_scan as es
+    calls: list[tuple[str, str]] = []
+    monkeypatch.setattr(es, "scan", lambda acc, days, companies, tracker: [])
+    monkeypatch.setattr(es, "_ids", lambda acc, q: calls.append((acc, q)) or [f"{acc}-1", "shared"])
+    monkeypatch.setattr(es, "_item", lambda acc, mid, companies: {"message_id": mid, "account": acc})
+    tracker = tmp_path / "tracker.md"
+    tracker.write_text("# Tracker\n", encoding="utf-8")
+    c = SimpleNamespace(gmail_aliases=["jobs", "main"], reply_account="main", tracker=tracker, search={})
+    items = iw.collect(c, 2)
+    assert {acc for acc, _ in calls} == {"jobs", "main"}
+    assert all("in:anywhere" in q for _, q in calls)
+    # one mailbox behind two aliases: a message id seen on jobs is not fetched again for main
+    assert [(i["message_id"], i["account"]) for i in items] == [("jobs-1", "jobs"), ("shared", "jobs"), ("main-1", "main")]
+
+
 def test_upwork_senders_come_from_the_disabled_sources():
     from types import SimpleNamespace
     c = SimpleNamespace(search={"sources": {

@@ -62,8 +62,11 @@ def alert_senders(c) -> list[str]:
 
 
 def collect(c: _client.Client, days: int) -> list[dict]:
-    """Листи за `days` днів: відповіді на подачі (employer_scan) і пошта платформ."""
-    import employer_scan as es  # читає конфіг клієнта на імпорті
+    """Mail of the last `days` days: replies to applications (employer_scan) and platform mail,
+    both from every configured mailbox. Platform mail follows the address a platform account was
+    registered with, which is not always the one employers reply to (04.11.2026: a client's LinkedIn
+    and ATS mail sat in `jobs` while the watcher read platforms from `main` only)."""
+    import employer_scan as es  # reads the client config at import
 
     from bot.filters.rules import parse_tracker_applications
     from bot.generators.employer_scan import scan_accounts
@@ -73,19 +76,21 @@ def collect(c: _client.Client, days: int) -> list[dict]:
     companies = list({a["company"] for a in parse_tracker_applications(c.tracker)})
     items: list[dict] = []
     seen: set[str] = set()
-    for acc in scan_accounts(c.gmail_aliases):
+    accounts = scan_accounts(c.gmail_aliases)
+    for acc in accounts:
         for it in es.scan(acc, days, companies, c.tracker):
             if it["message_id"] not in seen:
                 seen.add(it["message_id"])
                 items.append(it)
-    for q in platform_queries(days, ALL_SENDERS):
-        for mid in es._ids(c.reply_account, q):
-            if mid in seen:
-                continue
-            seen.add(mid)
-            it = es._item(c.reply_account, mid, companies)
-            if it is not None:
-                items.append(it)
+    for acc in accounts:
+        for q in platform_queries(days, ALL_SENDERS):
+            for mid in es._ids(acc, q):
+                if mid in seen:
+                    continue
+                seen.add(mid)
+                it = es._item(acc, mid, companies)
+                if it is not None:
+                    items.append(it)
     return items
 
 

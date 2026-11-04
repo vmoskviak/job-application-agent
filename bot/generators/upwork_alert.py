@@ -214,7 +214,8 @@ def parse_alert(subject: str, body: str, message_id: str = "", date: str = "") -
 
 
 def _plus_client(job: UpworkJob, para: str) -> None:
-    """"Payment verified · 4.95 stars · $11K spent · USA": the country is the one segment left."""
+    """"Payment verified · 4.95 stars · $11K spent · USA": the location comes last, so the last
+    segment that is none of the known signals is the country (a stray "New" badge never wins)."""
     for seg in (x.strip() for x in para.split("·")):
         pay = _PAYMENT_RE.search(seg)
         stars = _STARS_RE.match(seg)
@@ -225,7 +226,7 @@ def _plus_client(job: UpworkJob, para: str) -> None:
             job.rating = float(stars.group(1))
         elif spent:
             job.spent = spent.group(1).replace(" ", "")
-        elif _PLACE_RE.match(seg) and not job.country:
+        elif _PLACE_RE.match(seg):
             job.country = seg
 
 
@@ -258,7 +259,9 @@ def _parse_plus(flat: str, subject_title: str, message_id: str, date: str) -> Up
     for para in paras[i + 1:]:
         if _SEPARATOR_RE.match(para):
             continue
-        if _PLUS_BUDGET_RE.match(para):
+        if _PLUS_MORE_RE.search(para):   # first: a description may itself mention payment or spending
+            job.snippet = _PLUS_MORE_RE.sub("", para).strip()
+        elif _PLUS_BUDGET_RE.match(para):
             for seg in (x.strip() for x in para.split("·")):
                 if _PLUS_BUDGET_RE.match(seg):
                     _set_budget(job, seg)
@@ -270,8 +273,6 @@ def _parse_plus(flat: str, subject_title: str, message_id: str, date: str) -> Up
             job.skills = [s.strip() for s in _PLUS_SKILL_RE.findall(para[len("skills:"):]) if s.strip()]
         elif _PAYMENT_RE.search(para) or _SPENT_RE.search(para):
             _plus_client(job, para)
-        elif _PLUS_MORE_RE.search(para):
-            job.snippet = _PLUS_MORE_RE.sub("", para).strip()
         else:
             rest.append(para)
     if not job.snippet and rest:   # a short description has no "more" link

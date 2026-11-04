@@ -219,3 +219,17 @@ def test_plus_and_classic_mail_of_one_job_share_no_fields_by_accident():
     plus = parse_alert(PLUS_SUBJECT, plus_alert_body())
     classic = parse_alert(SUBJECT, alert_body())
     assert fingerprint(plus) != fingerprint(classic)
+
+
+def test_plus_description_mentioning_payment_or_spending_stays_the_snippet():
+    """The client line is recognised by "Payment verified" or "$… spent"; a description that says
+    the same words must not be mistaken for it."""
+    snippet = "Payment verified clients only: we have spent $20k on a Flutter MVP and need a native rebuild..."
+    job = parse_alert(PLUS_SUBJECT, plus_alert_body(snippet=snippet))
+    assert job.snippet == snippet
+    assert job.payment_verified is True and job.spent == "$9K" and job.country == "Portugal"
+
+
+def test_plus_country_is_the_last_free_segment():
+    job = parse_alert(PLUS_SUBJECT, plus_alert_body(client="Payment verified · New · $0 spent · Netherlands"))
+    assert job.country == "Netherlands" and job.spent == "$0" and job.rating is None

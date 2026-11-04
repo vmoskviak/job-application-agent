@@ -75,3 +75,47 @@ def test_main_strict_fails_on_hit_outside_license(tmp_path, monkeypatch):
                    leak_py="X = 'bewerbung@irgendeine-ag.de'\n")
     monkeypatch.setattr(chk, "repo_files", lambda: files)
     assert chk.main(["--strict"]) == 1
+
+
+def test_baseline_file_is_casefolded_and_ignores_comments(tmp_path):
+    (tmp_path / "b").write_text("# generic first words of tracker companies\nStadt\n\n  Reply \n", encoding="utf-8")
+    assert chk.read_baseline(tmp_path / "b") == {"stadt", "reply"}
+    assert chk.read_baseline(tmp_path / "missing") == set()
+
+
+def test_baseline_accepts_company_terms_only():
+    hits = {"Stadt": ["a.py ×1"], "Reply": ["b.py ×1"], "Newco": ["c.py ×2"], "Erika Muster": ["d.py ×1"]}
+    kept, skipped = chk.split_baselined(hits, company_terms={"Stadt", "Reply", "Newco", "Erika Muster"},
+                                        other_terms={"Erika Muster"}, accepted={"stadt", "reply", "erika muster"})
+    assert skipped == ["Reply", "Stadt"]
+    assert set(kept) == {"Newco", "Erika Muster"}   # a leaked name is never accepted, a new company is new
+
+
+def test_baseline_arg():
+    assert chk.baseline_arg([]) is None
+    assert chk.baseline_arg(["--baseline", "~/x"]) == Path("~/x").expanduser()
+    with pytest.raises(SystemExit):
+        chk.baseline_arg(["--baseline", "--strict"])
+
+
+def test_main_with_baseline_is_a_ratchet(tmp_path, monkeypatch, capsys):
+    """Accepted generic company words pass, a new company term fails and is named, a client's
+    name fails even when the baseline lists it."""
+    from types import SimpleNamespace
+    monkeypatch.setattr(chk, "ENGINE", tmp_path)
+    monkeypatch.setattr(chk._client, "list_clients", lambda: [SimpleNamespace(slug="x")])
+    monkeypatch.setattr(chk, "personal_terms", lambda c: {"Erika Muster"})
+    monkeypatch.setattr(chk, "job_ids", lambda c: set())
+    monkeypatch.setattr(chk, "tracker_companies", lambda c: {"Stadt", "Newco", "Erika Muster"})
+    files = _files(tmp_path, a_py="# Stadt Beispielhausen\n", b_py="# the Newco form\n")
+    monkeypatch.setattr(chk, "repo_files", lambda: files)
+    base = tmp_path / ".companies-baseline"
+    base.write_text("stadt\n", encoding="utf-8")
+    assert chk.main(["--baseline", str(base)]) == 1
+    assert "new: Newco" in capsys.readouterr().out
+    base.write_text("stadt\nnewco\n", encoding="utf-8")
+    assert chk.main(["--baseline", str(base)]) == 0
+    assert "2 term(s) accepted" in capsys.readouterr().out
+    files.append(_files(tmp_path, c_py="# Erika Muster applied\n")[0])
+    base.write_text("stadt\nnewco\nerika muster\n", encoding="utf-8")
+    assert chk.main(["--baseline", str(base)]) == 1

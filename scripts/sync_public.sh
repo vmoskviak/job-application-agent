@@ -1,19 +1,24 @@
 #!/usr/bin/env bash
-# Синхронізація рушія в публічну портфоліо-копію (github.com/vmoskviak/job-application-agent).
+# Sync the engine into its public portfolio copy (github.com/vmoskviak/job-application-agent).
 #
-#     scripts/sync_public.sh [шлях до публічного клону] [--dry-run]
+#     scripts/sync_public.sh [path to the public clone] [--dry-run]
 #
-# Копіює файли rsync-ом, нічого не комітить і не пушить. Після копіювання
-# ганяє check_no_private_data.py --strict у цільовій папці й падає, якщо
-# там лишились чужі контакти. Далі руками: git status, git diff, commit, push.
+# Copies the files with rsync; commits and pushes nothing. After the copy it runs two checks in
+# the target and fails if either finds something:
+#   1. check_no_private_data.py --strict with the private clients' terms (names, contacts, job ids);
+#   2. the same script with --companies against .companies-baseline, the accepted generic hits
+#      (first words of tracker companies such as «Stadt» or «Reply»): a term absent from the
+#      baseline is either an employer name that leaked into a docstring or a new generic word to
+#      accept by adding one line there. The pre-push hook of the public clone runs both as well.
+# Then by hand: git status, git diff, commit, push.
 #
-# Що в публічну копію не йде і чому:
-#   .git .venv __pycache__ .pytest_cache   службове
-#   .claude/                               локальні налаштування сесій; у публічному клоні свій settings.json
-#   .superpowers/ docs/superpowers/        робочі плани й спеки з історією реальних клієнтів
-#   bot/apply/check24.py bot/apply/eismann.py  модулі під сайти конкретних роботодавців (реальні заявки)
-#   tests/test_apply_employer_portals.py   їхні тести (URL із тими самими хостами)
-# У цілі не чіпаються (protect): LICENSE, docs/index.md, docs/privacy.md.
+# Left out of the public copy and why:
+#   .git .venv __pycache__ .pytest_cache .ruff_cache   build and tool state
+#   .claude/                                            local session settings; the public clone has its own settings.json
+#   .superpowers/ docs/superpowers/                     working plans and specs with the history of real clients
+#   the files listed in .public-exclude                 employer-specific portal modules, their test, the companies
+#                                                       baseline; the list itself stays private
+# Protected in the target (never touched): LICENSE, docs/index.md, docs/privacy.md.
 set -euo pipefail
 
 ENGINE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -27,17 +32,16 @@ for arg in "$@"; do
 done
 
 if [[ ! -d "$TARGET/.git" ]]; then
-    echo "ціль не git-клон: $TARGET" >&2
+    echo "target is not a git clone: $TARGET" >&2
     exit 1
 fi
 
 EXCLUDES=(
-    # /.git без слеша: у worktree це файл, а в цілі каталог, і той не можна чіпати
+    # /.git without a slash: in a worktree it is a file, in the target a directory that must stay
     --exclude=/.git --exclude=/.venv --exclude=__pycache__/ --exclude=.pytest_cache/
     --exclude=/.claude/ --exclude=/.superpowers/ --exclude=/docs/superpowers/
-    --exclude=/bot/apply/check24.py --exclude=/bot/apply/eismann.py
-    --exclude=/tests/test_apply_employer_portals.py
-    --exclude=.DS_Store --exclude=/var/ --exclude=/tmp/ --exclude=/logs/
+    --exclude-from="$ENGINE/.public-exclude"
+    --exclude=.DS_Store --exclude=.ruff_cache/ --exclude=/var/ --exclude=/tmp/ --exclude=/logs/
     --exclude=/examples/clients/*/var/ --exclude=/examples/clients/*/applications/
 )
 PROTECT=(
@@ -46,24 +50,29 @@ PROTECT=(
     --filter='P /.git'
 )
 
-# ${DRY[@]+...}: bash 3.2 на macOS під set -u падає на порожньому масиві
+# ${DRY[@]+...}: bash 3.2 on macOS fails on an empty array under set -u
 rsync -a --delete --itemize-changes ${DRY[@]+"${DRY[@]}"} "${EXCLUDES[@]}" "${PROTECT[@]}" "$ENGINE/" "$TARGET/" \
     | sed 's/^/  /'
-echo "== синхронізовано в $TARGET${DRY[@]+ (dry-run)}"
+echo "== synced into $TARGET${DRY[@]+ (dry-run)}"
 
 if [[ ${#DRY[@]} -eq 0 ]]; then
     PY="${PYTHON:-$ENGINE/.venv/bin/python}"
     [[ -x "$PY" ]] || PY=python3
+    # The check resolves the clients folder relative to the repository it runs in; in the public
+    # clone that folder does not exist and the check would silently shrink to its structural part.
+    export JOBSEARCH_CLIENTS_DIR="${JOBSEARCH_CLIENTS_DIR:-$ENGINE/../jobsearch-clients/clients}"
     (cd "$TARGET" && "$PY" scripts/check_no_private_data.py --strict)
-    echo "== check_no_private_data --strict у публічній копії: чисто"
+    echo "== check_no_private_data --strict in the public copy (client terms from $JOBSEARCH_CLIENTS_DIR): clean"
+    (cd "$TARGET" && "$PY" scripts/check_no_private_data.py --companies --baseline "$ENGINE/.companies-baseline")
+    echo "== companies against $ENGINE/.companies-baseline: no new terms"
     echo
     git -C "$TARGET" status --short | head -40
 fi
 
 cat <<EOF
 
-Далі руками, в $TARGET:
-  git status && git diff            # переглянути, що змінилось
-  git add -A && git commit           # закомітити з осмисленим повідомленням
-  git push                           # лише після перегляду diff
+Next, by hand, in $TARGET:
+  git status && git diff            # review what changed
+  git add -A && git commit           # commit with a meaningful message
+  git push                           # only after reviewing the diff
 EOF
