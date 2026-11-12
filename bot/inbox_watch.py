@@ -197,6 +197,12 @@ def run_watch(cfg: WatchConfig, items: list[dict], tracker: Path, state_dir: Pat
             mark_seen(mid)
             continue
         closed = _closed_status(tracker, company)
+        if closed and item.get("promo"):
+            # Gmail filed it under Promotions and the operator closed the row: marketing of a
+            # platform he left, not a reply (12.11.2026: «survey and interview» became a card)
+            res.system += 1
+            mark_seen(mid)
+            continue
         if not closed:   # a closed row stays the operator's decision; the card tells him about the mail
             set_status(company, status_for_class(cls))
         url = gmail_url(cfg.gmail_address, mid)

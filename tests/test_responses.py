@@ -172,3 +172,39 @@ def test_rescheduled_interview_with_leider_mitteilen_stays_interview():
     body = ("Leider müssen wir Ihnen mitteilen, dass wir den Termin verschieben müssen. "
             "Wir möchten Sie stattdessen am Donnerstag um 10 Uhr zu einem Gespräch einladen.")
     assert classify_response(body) == "interview"
+
+
+def test_withdrawn_request_is_rejected_not_interview():
+    """12.11.2026: «der Kunde hat die Projektanfrage zurückgezogen» above the candidate's own quoted
+    mail («für ein kurzes Telefonat») came out as interview. The body arrives as one line, because
+    employer_scan collapses whitespace."""
+    from bot.generators.responses import classify_response, strip_quoted
+    body = ("Hallo Frau Muster, vielen Dank für Ihre E-Mail. Leider hat der Kunde die Projektanfrage "
+            "kurzfristig zurückgezogen, sodass wir die Position aktuell nicht besetzen können. "
+            "Herzliche Grüße Anna Beispiel Am Do., 12. Nov. 2026 um 13:36 Uhr schrieb Erika Muster < "
+            "erika@example.com>: > Guten Tag, > ich habe Interesse. Für ein kurzes Telefonat stehe "
+            "ich gern zur Verfügung.")
+    assert "Telefonat" not in strip_quoted(body)
+    assert classify_response(body) == "rejected"
+
+
+def test_one_line_english_quote_is_cut():
+    from bot.generators.responses import classify_response, strip_quoted
+    body = ("Hi Erika, unfortunately the role is on hold for now. Best, Anna "
+            "On Thu, Nov 12, 2026 at 1:36 PM Erika Muster <erika@example.com> wrote: "
+            "> I am available for an interview any day this week.")
+    assert "available for an interview" not in strip_quoted(body)
+    assert classify_response(body) == "rejected"
+
+
+def test_position_not_filled_is_a_hard_rejection():
+    from bot.generators.responses import classify_response
+    assert classify_response("Nach interner Abstimmung werden wir die Stelle nicht besetzen. "
+                             "Für Rückfragen sind wir telefonisch erreichbar.") == "rejected"
+
+
+def test_prose_with_am_and_schrieb_far_apart_is_not_a_quote():
+    from bot.generators.responses import strip_quoted
+    body = ("Wir laden Sie am Montag zum Gespräch ein. Herr Beispiel schrieb uns, dass Sie Zeit haben: "
+            "bitte bestätigen Sie den Termin.")
+    assert "bestätigen" in strip_quoted(body)

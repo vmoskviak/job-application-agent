@@ -127,7 +127,11 @@ _FULL_REMOTE_DESC_RE = re.compile(
     r"[\s-]*(?:remote|im\s+home[\s-]*office|home[\s-]*office)"
     r"|remote[\s-]*(?:first|stelle|position|job|only)"
     r"|(?:arbeitsort|standort|einsatzort|dienstsitz)\s*:?\s*(?:remote|home[\s-]*office)\b"
-    r"|(?:remote|home[\s-]*office)\s*(?:,\s*)?(?:deutschlandweit|bundesweit|innerhalb\s+deutschlands|aus\s+ganz\s+deutschland)",
+    r"|(?:remote|home[\s-]*office)\s*(?:,\s*)?(?:deutschlandweit|bundesweit|innerhalb\s+deutschlands|aus\s+ganz\s+deutschland)"
+    # Job boards put the workplace next to the country: «Remote, Deutschland», «Remote (Deutschland)»,
+    # «Germany · Remote». No comma in the country-first form: «in Deutschland, remote Tage nach Absprache».
+    r"|\bremote\s*[,(/|·–-]\s*\(?(?:deutschland|germany)\b"
+    r"|\b(?:deutschland|germany)\s*[·|/–-]\s*remote\b",
     re.IGNORECASE,
 )
 
@@ -451,6 +455,19 @@ def tracker_urls(tracker_path: Path) -> set[str]:
     return {normalize_url(u) for u in _URL_RE.findall(text)}
 
 
+def _same_job_in_run(entry: dict, kept: dict) -> bool:
+    """The same posting twice in one batch: same company with a similar title.
+    «Unbekannt» is a placeholder, not a company: two jobs of unrecognised companies are
+    the same job only under the same URL (12.11.2026: three leads of different companies collapsed)."""
+    if not titles_similar(entry.get("title", ""), kept.get("title", "")):
+        return False
+    if is_junk_company(entry.get("company", "")) or is_junk_company(kept.get("company", "")):
+        url, kept_url = (normalize_url(e.get("source_url") or e.get("url") or "") for e in (entry, kept))
+        return bool(url) and url == kept_url
+    return _company_keys_match(normalize_company(entry.get("company", "")),
+                               normalize_company(kept.get("company", "")))
+
+
 def dedup_against_tracker(entries: list[dict], tracker_path: Path) -> tuple[list[dict], list[dict]]:
     """Розділяє entries на (нові, дублікати-проти-трекера)."""
     tracked = parse_tracker_applications(tracker_path)
@@ -606,10 +623,7 @@ def apply_rules(
     # пріоритетом/скором, решту в excluded як duplicate_in_run.
     unique: list[dict] = []
     for entry in selected:
-        if any(_company_keys_match(normalize_company(entry.get("company", "")),
-                                   normalize_company(kept.get("company", "")))
-               and titles_similar(entry.get("title", ""), kept.get("title", ""))
-               for kept in unique):
+        if any(_same_job_in_run(entry, kept) for kept in unique):
             exclude(entry, "duplicate_in_run")
             continue
         unique.append(entry)

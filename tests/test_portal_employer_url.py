@@ -224,3 +224,43 @@ def test_xing_runner_records_the_employer_link_under_the_title(monkeypatch, tmp_
         res = xing.apply(_XingPage(html, XING_URL), XING_URL, tmp_path, [], dry_run=False)
         assert res.status == "form_unsupported" and external_application(res)
         assert res.employer_url == want, href
+
+
+# XING embeds its «similar jobs» in the page state, each with its own apply link.
+def _xing_state(own_application: str) -> str:
+    other = _escaped("https://jobs.example.net/de/jobs/218/apply").replace("\\/", "\\u002F")
+    return ('{"ROOT_QUERY":{"similarJobs({\\"jobId\\":\\"123456789.aa11bb\\"})":{}},'
+            '"VisibleJob:123456789.aa11bb":{"__typename":"VisibleJob","id":"123456789.aa11bb",'
+            '"title":"Sachbearbeitung","application":' + own_application + '},'
+            '"VisibleJob:987654321.cc22dd":{"__typename":"VisibleJob","id":"987654321.cc22dd",'
+            '"title":"Sachbearbeitung Einkauf","application":{"__typename":"UrlApplication",'
+            '"applyUrl":"' + other + '"}}}')
+
+
+def test_xing_posting_ignores_apply_links_of_similar_jobs():
+    """Rehearsal 12.11.2026: a posting with XING's own form resolved to the form of another
+    company from the «similar jobs» block; the worker would have applied there."""
+    html = _xing_state('{"__typename":"JobXingApplication"}')
+    r = resolve_channel(_entry(XING_URL), lambda u: html, NoBoard(), market="de_employment")
+    assert r.channel == "none" and "no employer apply url" in r.note
+
+
+def test_xing_posting_takes_its_own_apply_link_among_similar_jobs():
+    own = '{"__typename":"UrlApplication","applyUrl":"' + APPLY.replace("/", "\\u002F") + '"}'
+    r = resolve_channel(_entry(XING_URL), lambda u: _xing_state(own), NoBoard(), market="de_employment")
+    assert r.channel == "form" and r.apply_url == APPLY
+
+
+def test_xing_page_with_job_nodes_but_without_this_posting_is_not_a_form():
+    html = _xing_state('{"__typename":"JobXingApplication"}').replace("123456789", "111111111")
+    r = resolve_channel(_entry(XING_URL), lambda u: html, NoBoard(), market="de_employment")
+    assert r.channel == "none"
+
+
+def test_xing_posting_declared_apply_link_counts_even_as_a_plain_page():
+    """XING names the employer's application page itself; «job.example.org/de?id=…» carries
+    no apply word and used to fall below the XING minimum."""
+    declared = "https://job.example.org/de?id=2dc76c&utm_source=xing.com"
+    own = '{"__typename":"UrlApplication","applyUrl":"' + declared.replace("/", "\\u002F") + '"}'
+    r = resolve_channel(_entry(XING_URL), lambda u: _xing_state(own), NoBoard(), market="de_employment")
+    assert r.channel == "form" and r.apply_url == "https://job.example.org/de?id=2dc76c"

@@ -23,7 +23,11 @@ _REJECTED_KW  = ["absage", "nicht berücksichtigen", "anderweitig besetzt",
                   # англомовні ATS контрактного ринку (Greenhouse, Ashby, Lever)
                   "not to move forward", "not be moving forward",
                   "not moving forward", "decided to move forward with other",
-                  "decided to proceed with other"]
+                  "decided to proceed with other",
+                  # 12.11.2026: an agency wrote «der Kunde hat die Projektanfrage kurzfristig zurückgezogen,
+                  # sodass wir die Position nicht besetzen können»; no row stays open for a request that is gone
+                  "anfrage zurückgezogen", "ausschreibung zurückgezogen", "kurzfristig zurückgezogen",
+                  "nicht besetzen", "has been put on hold", "role is on hold", "position is on hold"]
 # М'яке «на жаль»: у запрошенні теж буває («leider nur telefonisch»), тому
 # поступається словам про співбесіду.
 _REJECTED_SOFT_KW = ["leider", "bedauern wir", "unfortunately"]
@@ -61,12 +65,23 @@ _QUOTE_RE = re.compile(
 )
 
 
+# The same headers inside one line: employer_scan collapses whitespace, so a body often has no line
+# starts at all (12.11.2026: the candidate's own «für ein kurzes Telefonat», quoted under a
+# withdrawal, made it an interview). A date must follow «Am»/«On», plain prose does not match.
+_QUOTE_INLINE_RE = re.compile(
+    r"\bam\s(?:(?:mo|di|mi|do|fr|sa|so)\w*\.?,?\s)?\d{1,2}\.[^\n]{0,60}?\sschrieb\s[^\n]{0,160}?:"
+    r"|\bon\s(?:(?:mon|tue|wed|thu|fri|sat|sun)\w*\.?,?\s)?"
+    r"(?:[a-z]{3,9}\.?\s\d{1,2}|\d{1,2}\.?\s[a-z]{3,9}|\d{1,2}[./]\d{1,2})[^\n]{0,80}?\swrote:",
+    re.IGNORECASE,
+)
+
+
 def strip_quoted(body: str) -> str:
     """Лише нова частина листа: цитата нижче належить іншому листу й іншому
     класу (28.10.2026 запрошення BAMF стало «rejected» через «leider» у
     власному листі кандидатки, процитованому під відповіддю)."""
-    m = _QUOTE_RE.search(body or "")
-    head = (body or "")[: m.start()] if m else (body or "")
+    starts = [m.start() for m in (_QUOTE_RE.search(body or ""), _QUOTE_INLINE_RE.search(body or "")) if m]
+    head = (body or "")[: min(starts)] if starts else (body or "")
     # порожня нова частина (лист лише з цитатою) класифікується як є
     return head if head.strip() else (body or "")
 
@@ -251,6 +266,17 @@ _WEAK_TOKENS = frozenset({
 })
 
 
+_PAREN_RE = re.compile(r"\([^)]*\)")
+
+
+def _token_in_domain(token: str, labels: list[str]) -> bool:
+    """A name token names the sender's domain when it is a whole label («nordnetz» in
+    nordnetz-karriere.de) or a long part of one («delivery» in deliveryfalcon.com). A short token
+    inside a longer label is a coincidence: «tech» in another firm's domain moved a row to
+    rejected on 12.11.2026."""
+    return any(token == lab or (len(token) >= 6 and token in lab) for lab in labels)
+
+
 def match_response_to_company(response: dict, companies: list[str]) -> Optional[str]:
     """Матчить лист до компанії з трекера за from-доменом і subject/body.
 
@@ -262,25 +288,28 @@ def match_response_to_company(response: dict, companies: list[str]) -> Optional[
     from bot.filters.rules import normalize_company
 
     domain = _fold(extract_domain(response.get("from", "")) or "")
+    # labels without the TLD, hyphenated ones split: «nordnetz-karriere.de» → nordnetz, karriere
+    labels = [lab for lab in re.split(r"[.\-_]", domain.rsplit(".", 1)[0]) if lab] if domain else []
     haystack = _fold((response.get("subject", "") + " " + response.get("body", ""))[:3000])
 
     best: Optional[str] = None
     best_score: tuple[int, int, int] = (0, 0, 0)
     for company in companies:
-        norm = _fold(normalize_company(company))
+        # a note in parentheses («(agency; end client: …)») describes the row, it is not the name
+        norm = _fold(normalize_company(_PAREN_RE.sub(" ", company)))
         tokens = [t for t in norm.split() if len(t) >= 4]
         if not tokens:
             continue
         strong = [t for t in tokens if t not in _WEAK_TOKENS]
         main_token = tokens[0]
 
-        by_domain = bool(domain) and any(t in domain for t in (strong or tokens))
+        by_domain = any(_token_in_domain(t, labels) for t in (strong or tokens))
         # у тексті: усі токени назви присутні, і серед них є хоч один сильний
         by_text = bool(strong) and all(t in haystack for t in tokens[:2])
 
         if not (by_domain or by_text):
             continue
-        matched_strong = sum(1 for t in strong if t in haystack or t in domain)
+        matched_strong = sum(1 for t in strong if t in haystack or _token_in_domain(t, labels))
         score = (1 if by_domain else 0, matched_strong, len(main_token))
         if score > best_score:
             best, best_score = company, score

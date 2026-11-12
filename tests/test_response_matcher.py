@@ -49,3 +49,34 @@ class TestStillMatches:
 
     def test_no_companies_gives_none(self):
         assert match_response_to_company({"from": "a@b.de", "subject": "x", "body": "y"}, []) is None
+
+
+class TestDomainNeedsAWholeLabel:
+    """12.11.2026: a private mail from a metering company was matched to an agency row because
+    the short token «tech» of the agency name is a substring of the sender's domain. The row
+    went to rejected."""
+
+    COMPANIES = ["Norwind Tech Solutions GmbH (agency; end client: digital agency in Spain)",
+                 "Delivery Falcon SE", "Nordnetz GmbH"]
+
+    def test_short_token_inside_a_longer_domain_label_is_no_match(self):
+        resp = {"from": "service@techhaus.example", "subject": "AW: Ihre Anfrage",
+                "body": "leider duerfen wir Ihnen keine Auskuenfte erteilen."}
+        assert match_response_to_company(resp, self.COMPANIES) is None
+
+    def test_note_in_parentheses_is_not_part_of_the_name(self):
+        resp = {"from": "hello@digital-agency.example", "subject": "Newsletter",
+                "body": "Our digital agency in Spain has news."}
+        assert match_response_to_company(resp, self.COMPANIES) is None
+
+    def test_exact_label_still_matches(self):
+        resp = {"from": "jobs@norwind.example", "subject": "Your application", "body": "Thanks."}
+        assert match_response_to_company(resp, self.COMPANIES) == self.COMPANIES[0]
+
+    def test_joined_name_as_domain_still_matches(self):
+        resp = {"from": "careers@deliveryfalcon.example", "subject": "Your application", "body": "Thanks."}
+        assert match_response_to_company(resp, self.COMPANIES) == "Delivery Falcon SE"
+
+    def test_hyphenated_domain_still_matches(self):
+        resp = {"from": "careers@nordnetz-karriere.example", "subject": "Bewerbung", "body": "Danke."}
+        assert match_response_to_company(resp, self.COMPANIES) == "Nordnetz GmbH"

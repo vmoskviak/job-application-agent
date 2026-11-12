@@ -258,6 +258,44 @@ def employer_apply_url(html: str, min_score: int = 1) -> str | None:
     return best[0] if len(sites) == 1 else None
 
 
+_XING_JOB_NODE = re.compile(r'"VisibleJob:(\d+)[^"]*":\{')
+_XING_POSTING_ID = re.compile(r"-(\d+)/?(?:[?#].*)?$")
+
+
+def xing_own_posting(html: str, url: str) -> str:
+    """The part of a XING posting page that describes the posting itself.
+
+    The page state lists the «similar jobs» as `VisibleJob:<id>` nodes next to the posting's own,
+    each with its apply link, so a link taken from the whole page can lead to another employer
+    (12.11.2026: a posting with XING's own form resolved to a similar job's form). With such
+    nodes on the page only the node of the posting id in `url` counts, "" when it is missing;
+    a page without them comes back whole."""
+    nodes = list(_XING_JOB_NODE.finditer(html or ""))
+    if not nodes:
+        return html or ""
+    posting_id = _XING_POSTING_ID.search(url or "")
+    for i, node in enumerate(nodes):
+        if posting_id and node.group(1) == posting_id.group(1):
+            end = nodes[i + 1].start() if i + 1 < len(nodes) else len(html)
+            return html[node.start():end]
+    return ""
+
+
+_XING_APPLY_URL = re.compile(r'"application":\{"__typename":"UrlApplication","applyUrl":"([^"]+)"')
+
+
+def xing_declared_apply_url(own_posting: str) -> str | None:
+    """The apply URL a XING posting declares for itself (`application.applyUrl` of its own node,
+    see `xing_own_posting`). XING names it as the employer's application page, so it counts even
+    when it looks like a plain careers page («job.example.org/de?id=…»); a board or aggregator
+    address does not."""
+    m = _XING_APPLY_URL.search(own_posting or "")
+    if not m:
+        return None
+    url = _unescape(m.group(1))
+    return _strip_tracking(url) if employer_url_ok(url) else None
+
+
 def login_wall(url: str) -> bool:
     """The board sent the browser to its sign-in page."""
     return bool(_LOGIN_URL.search(url or ""))

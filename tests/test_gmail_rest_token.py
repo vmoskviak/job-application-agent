@@ -27,6 +27,7 @@ def token_files(monkeypatch, tmp_path):
     monkeypatch.setitem(g.OAUTH_KEYS, "acc", keys)
     monkeypatch.setitem(g.CREDS, "acc", creds)
     monkeypatch.setattr(g.time, "sleep", lambda s: None)
+    monkeypatch.setattr(g, "_TOKENS", {})
 
 
 def _responses(monkeypatch, codes):
@@ -61,3 +62,55 @@ def test_client_error_is_not_retried(monkeypatch, token_files):
     with pytest.raises(httpx.HTTPStatusError):
         g.access_token("acc")
     assert calls == [400]
+
+
+def test_token_is_cached_for_the_pass_and_refreshed_near_expiry(monkeypatch, token_files):
+    """04.11.2026: every Gmail call refreshed the token, one more request per call to time out."""
+    calls = _responses(monkeypatch, [200, 200])
+    assert g.access_token("acc") == "tok" and g.access_token("acc") == "tok"
+    assert calls == [200]
+    now = g.time.time()
+    monkeypatch.setattr(g.time, "time", lambda: now + 3600 - g.TOKEN_MARGIN_SECONDS + 1)
+    assert g.access_token("acc") == "tok"
+    assert calls == [200, 200]
+
+
+def _api_responses(monkeypatch, outcomes):
+    """outcomes: status codes, or "timeout" for a read timeout; one per attempt."""
+    calls = []
+    req = httpx.Request("GET", g.API_URL + "x")
+
+    def request(method, url, **k):
+        out = outcomes[len(calls)]
+        calls.append(method)
+        if out == "timeout":
+            raise httpx.ReadTimeout("slow", request=req)
+        return httpx.Response(out, json={"ok": out}, request=req)
+
+    monkeypatch.setattr(g.httpx, "request", request)
+    monkeypatch.setattr(g, "access_token", lambda account: "tok")
+    return calls
+
+
+def test_get_is_retried_on_timeout_and_5xx(monkeypatch, token_files):
+    calls = _api_responses(monkeypatch, ["timeout", 503, 200])
+    assert g.api("acc", "GET", "x") == {"ok": 200}
+    assert calls == ["GET", "GET", "GET"]
+
+
+def test_get_gives_up_after_three_attempts(monkeypatch, token_files):
+    _api_responses(monkeypatch, ["timeout", "timeout", "timeout"])
+    with pytest.raises(httpx.ReadTimeout):
+        g.request("acc", "GET", "x")
+    _api_responses(monkeypatch, [503, 503, 503])
+    assert g.request("acc", "GET", "x").status_code == 503
+
+
+def test_post_is_never_retried(monkeypatch, token_files):
+    calls = _api_responses(monkeypatch, ["timeout", 200])
+    with pytest.raises(httpx.ReadTimeout):
+        g.request("acc", "POST", "messages/send")
+    assert calls == ["POST"]
+    calls = _api_responses(monkeypatch, [502, 200])
+    assert g.request("acc", "POST", "messages/send").status_code == 502
+    assert calls == ["POST"]

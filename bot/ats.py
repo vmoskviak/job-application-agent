@@ -393,9 +393,14 @@ def _employer_link_board(url: str) -> str | None:
 def _portal_posting(board: str, url: str, fetch_html: Callable[[str], str | None]) -> Resolution:
     """A StepStone or XING posting: a form at the employer's apply URL named on the page, else
     channel none. The board page itself is never a form for the worker."""
-    from bot.apply.job_boards import employer_apply_url
+    from bot.apply.job_boards import employer_apply_url, xing_declared_apply_url, xing_own_posting
 
-    found = employer_apply_url(fetch_html(url) or "", min_score=_EMPLOYER_LINK_MIN_SCORE[board])
+    html = fetch_html(url) or ""
+    found = None
+    if board == "xing":
+        html = xing_own_posting(html, url)
+        found = xing_declared_apply_url(html)
+    found = found or employer_apply_url(html, min_score=_EMPLOYER_LINK_MIN_SCORE[board])
     if found:
         return Resolution("form", found, ats_from_url(found), f"{board} posting, employer apply url")
     return Resolution("none", url, None, f"{board} posting, no employer apply url")

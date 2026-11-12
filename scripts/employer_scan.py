@@ -18,15 +18,14 @@ import json
 import sys
 from pathlib import Path
 
-import httpx
 
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
 sys.path.insert(0, str(REPO / "scripts"))
 
-import gmail_rest as g  # noqa: E402
-from alert_volume import ALL_SENDERS  # noqa: E402
-from bot.generators.employer_scan import (  # noqa: E402
+import gmail_rest as g
+from alert_volume import ALL_SENDERS
+from bot.generators.employer_scan import (
     SWEEP_LIMIT,
     build_employer_queries,
     employer_senders,
@@ -39,13 +38,12 @@ from bot.generators.employer_scan import (  # noqa: E402
     tracker_status_by_company,
     scan_accounts,
 )
-from bot.generators.responses import (  # noqa: E402
+from bot.generators.responses import (
     classify_response,
     match_response_to_company,
 )
 
-API = "https://gmail.googleapis.com/gmail/v1/users/me/"
-from bot import client as _client  # noqa: E402
+from bot import client as _client
 
 TRACKER = _client.active().tracker
 OUR_ADDRESSES = tuple(
@@ -56,9 +54,8 @@ _OWN = tuple(a for a in (*OUR_ADDRESSES, _client.active().profile.get("email")) 
 
 
 def _get(account: str, path: str, **params):
-    tok = g.access_token(account)
-    r = httpx.request("GET", API + path, headers={"Authorization": f"Bearer {tok}"},
-                      timeout=60, params=params or None)
+    """One GET of the Gmail API (gmail_rest.request: cached token, retried on a timeout or 5xx)."""
+    r = g.request(account, "GET", path, params=params or None)
     if r.status_code >= 400:
         raise RuntimeError(f"GET {path} -> {r.status_code}: {r.text[:200]}")
     return r.json() if r.content.strip() else {}
@@ -136,6 +133,8 @@ def _item(account: str, mid: str, companies: list[str]) -> dict | None:
         "reply_to": hdr.get("Reply-To", ""),
         # read in:anywhere: a mail the owner binned is still seen, but nobody answers it
         "trashed": "TRASH" in (msg.get("labelIds") or []),
+        # Gmail's Promotions tab: the watcher drops such a mail when the row is closed
+        "promo": "CATEGORY_PROMOTIONS" in (msg.get("labelIds") or []),
         "subject": subject,
         "classification": classification,
         "body": body[:3000],   # inbox watcher: чернетка відповіді пишеться по тексту листа

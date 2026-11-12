@@ -504,3 +504,20 @@ def test_closed_tracker_row_is_not_reopened_by_keywords(tmp_path):
     r = env.run([ITEM("company_interview_de")])
     assert r.tracker_updates == [] and "| withdrew |" in env.text() and env.llm.prompts == []
     assert len(env.t.sent) == 1 and "closed (withdrew)" in env.t.sent[0][1]
+
+
+def test_promotional_mail_for_a_closed_row_gets_no_card(tmp_path):
+    """12.11.2026: a marketing mail of a platform whose row was skipped («survey and interview»)
+    arrived as an interview card. Gmail had filed it under Promotions."""
+    closed = CONTRACT_TRACKER.replace("| Example Co | Android Engineer | HN Who is hiring (email) | — | sent |",
+                                      "| Example Co | Android Engineer | HN Who is hiring (email) | — | skipped |")
+    env = Env(tmp_path, tracker_text=closed)
+    r = env.run([ITEM("company_interview_de", promo=True)])
+    assert env.t.sent == [] and r.carded == [] and r.tracker_updates == [] and env.llm.prompts == []
+    assert r.system == 1 and ITEM_ID("company_interview_de") in SeenSet(env.state / "inbox_seen.json")
+
+
+def test_promotional_flag_does_not_hide_a_mail_for_an_open_row(tmp_path):
+    env = Env(tmp_path)
+    r = env.run([ITEM("company_interview_de", promo=True)])
+    assert r.tracker_updates == [("Example Co", "interview")] and len(env.t.sent) == 1

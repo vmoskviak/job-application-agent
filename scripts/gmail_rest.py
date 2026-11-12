@@ -38,7 +38,7 @@ from zoneinfo import ZoneInfo
 import httpx
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from bot import client as _client  # noqa: E402
+from bot import client as _client
 
 _c = _client.active()
 _accounts = _c.accounts
@@ -54,7 +54,17 @@ TOKEN_ATTEMPTS = 3
 TOKEN_RETRY_SECONDS = 5
 
 
+# A token lives an hour. It used to be refreshed before every call, one token request per Gmail
+# call and one more place for a 5xx to hit; now it is cached per account for the life of the
+# process (one pass) and refreshed TOKEN_MARGIN_SECONDS before it expires.
+_TOKENS: dict[str, tuple[str, float]] = {}   # account → (token, expiry as time.time())
+TOKEN_MARGIN_SECONDS = 300
+
+
 def access_token(account: str) -> str:
+    cached = _TOKENS.get(account)
+    if cached and cached[1] - time.time() > TOKEN_MARGIN_SECONDS:
+        return cached[0]
     keys = json.loads(OAUTH_KEYS[account].read_text())
     key = keys.get("installed") or keys.get("web")
     creds = json.loads(CREDS[account].read_text())
@@ -69,7 +79,34 @@ def access_token(account: str) -> str:
             break
         time.sleep(TOKEN_RETRY_SECONDS * attempt)
     r.raise_for_status()
-    return r.json()["access_token"]
+    data = r.json()
+    _TOKENS[account] = (data["access_token"], time.time() + float(data.get("expires_in") or 3600))
+    return data["access_token"]
+
+
+# The Gmail API itself times out or answers a 5xx now and then (26.10, 03.11, 04.11.2026: one read
+# timeout cost a whole hourly inbox pass and raised an «OAuth prüfen» alert). A GET is idempotent
+# and is retried with a short pause; a send or a label change (POST) is not, so nothing goes twice.
+API_URL = "https://gmail.googleapis.com/gmail/v1/users/me/"
+API_ATTEMPTS = 3
+API_RETRY_SECONDS = 5
+
+
+def request(account: str, method: str, path: str, **kw) -> httpx.Response:
+    """One Gmail API call with the account's token; a GET is retried on a timeout or a 5xx."""
+    attempts = API_ATTEMPTS if method.upper() == "GET" else 1
+    for attempt in range(1, attempts + 1):
+        try:
+            r = httpx.request(method, API_URL + path,
+                              headers={"Authorization": f"Bearer {access_token(account)}"}, timeout=60, **kw)
+        except httpx.TimeoutException:
+            if attempt == attempts:
+                raise
+        else:
+            if r.status_code < 500 or attempt == attempts:
+                return r
+        time.sleep(API_RETRY_SECONDS * attempt)
+    raise AssertionError("unreachable: the last attempt returns or raises")
 
 
 def berlin_date() -> str:
@@ -83,9 +120,7 @@ def berlin_date() -> str:
 
 
 def api(account: str, method: str, path: str, **kw):
-    tok = access_token(account)
-    r = httpx.request(method, f"https://gmail.googleapis.com/gmail/v1/users/me/{path}",
-                      headers={"Authorization": f"Bearer {tok}"}, timeout=60, **kw)
+    r = request(account, method, path, **kw)
     r.raise_for_status()
     return r.json()
 

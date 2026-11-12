@@ -169,7 +169,9 @@ def _employer_url(page, button) -> str:
     """The employer's apply URL of an external XING posting: the href of «Zur Arbeitgeber-Website»
     when it leads off XING, else an apply link in the page data (`employer_apply_url`, strict:
     a careers homepage of the company profile is no apply form). "" when there is none."""
-    from bot.apply.job_boards import employer_apply_url, employer_url_ok
+    from bot.apply.job_boards import (
+        employer_apply_url, employer_url_ok, xing_declared_apply_url, xing_own_posting,
+    )
 
     try:
         href = button.get_attribute("href", timeout=2000) if button is not None else None
@@ -178,7 +180,8 @@ def _employer_url(page, button) -> str:
     if href and employer_url_ok(href):
         return href
     try:
-        return employer_apply_url(page.content(), min_score=2) or ""
+        own = xing_own_posting(page.content(), page.url)
+        return xing_declared_apply_url(own) or employer_apply_url(own, min_score=2) or ""
     except Exception:  # noqa: BLE001
         return ""
 

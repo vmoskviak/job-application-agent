@@ -609,3 +609,37 @@ def test_dedup_catches_company_hidden_in_the_title(tmp_path):
     assert [r["company"] for r in repaired] == ["Muster Certification GmbH", "Muster Legal", "MUSTERSERVICE"]
     fresh, dupes = dedup_against_tracker(repaired, tracker)
     assert len(dupes) == 3 and not fresh
+
+
+def test_location_full_remote_policy_keeps_remote_with_country(monkeypatch):
+    """Job boards write a fully remote job as «Remote, Deutschland» or «Germany · Remote»
+    (rehearsal 12.11.2026: remote sales roles went out as outside_nrw)."""
+    from bot.filters import rules
+    monkeypatch.setattr(rules, "REMOTE_POLICY", "full")
+    assert location_ok("Deutschland", "Account Executive (m/w/d) | Remote, Deutschland") is True
+    assert location_ok("Deutschland", "Standorte: Berlin / Remote (Deutschland)") is True
+    assert location_ok("Deutschland", "Vollzeit · Germany · Remote") is True
+    assert location_ok("Remote, Deutschland") is True
+    # a benefit line is still not a fully remote job
+    assert location_ok("Hamburg", "Homeoffice möglich, Standort Deutschland") is False
+    assert location_ok("Hamburg", "Hybrid in Deutschland, remote Tage nach Absprache") is False
+
+
+def test_apply_rules_keeps_different_jobs_of_unknown_companies(tmp_path):
+    """«Unbekannt» is a placeholder, not a company: two unknown companies with similar titles
+    are two jobs (rehearsal 12.11.2026: three good leads went out as duplicate_in_run)."""
+    from bot.filters import rules
+    tracker = tmp_path / "tracker.md"
+    tracker.write_text("| # | Дата | Компанія | Позиція |\n|---|---|---|---|\n")
+    digest = [
+        {"title": "Teamassistenz Einkauf (m/w/d)", "company": "Unbekannt",
+         "location": "Düsseldorf", "description": "", "score": 60, "category": "A1", "source_url": "https://a.example/1"},
+        {"title": "Teamassistenz Einkauf und Logistik (m/w/d)", "company": "Unbekannt",
+         "location": "Düsseldorf", "description": "", "score": 50, "category": "A1", "source_url": "https://b.example/2"},
+        # the same posting twice still collapses, by URL
+        {"title": "Teamassistenz Einkauf", "company": "Unbekannt",
+         "location": "Düsseldorf", "description": "", "score": 40, "category": "A1", "source_url": "https://a.example/1/"},
+    ]
+    res = rules.apply_rules(digest, tracker, min_score=25)
+    assert [e["source_url"] for e in res["selected"]] == ["https://a.example/1", "https://b.example/2"]
+    assert [e["reason"] for e in res["excluded"]] == ["duplicate_in_run"]
